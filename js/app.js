@@ -86,19 +86,22 @@
   }
 
   /* ---------- 描画 ---------- */
-  var rendering = false;
+  var rendering = false, pending = false;
   function render() {
     var view = document.getElementById('view');
     var v = Views[state.tab];
     document.getElementById('dateLabel').textContent = dateLabel(state.date);
-    // カラダ/グラフ/設定タブでは日付ナビの意味が薄い項目もあるが、日付は共通で保持する
     if (!v) { view.innerHTML = '<div class="card">画面が見つかりません</div>'; return; }
-    if (rendering) return;
+    // 描画中に次の要求が来たら捨てずに積んでおき、終わったら最新状態で描き直す
+    if (rendering) { pending = true; return; }
     rendering = true;
     Promise.resolve(v.render(view, state)).catch(function (err) {
       view.innerHTML = '<div class="card"><b>表示エラー</b><div class="small muted">' +
         esc(String((err && err.message) || err)) + '</div></div>';
-    }).then(function () { rendering = false; });
+    }).then(function () {
+      rendering = false;
+      if (pending) { pending = false; render(); }
+    });
   }
 
   function setTab(tab) {

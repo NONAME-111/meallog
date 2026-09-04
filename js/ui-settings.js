@@ -105,6 +105,12 @@
       '<button class="btn line wide" id="btnExport">データを書き出す（JSON）</button>' +
       '<button class="btn line wide" id="btnImport" style="margin-top:8px">データを取り込む</button>' +
       '<input type="file" id="fileImport" accept="application/json,.json" hidden>' +
+      '<hr class="sep">' +
+      '<div class="small muted" style="margin-bottom:8px">外食チェーンのメニューなど、まとまった食品データを' +
+      'CSVでマイ食品に取り込めます。1行目に見出し（名前, 単位, エネルギー, たんぱく質, 脂質, 炭水化物, ' +
+      '食塩相当量, 食物繊維, 飽和脂肪酸, ブランド, バーコード）を入れてください。名前とエネルギーだけでも可。</div>' +
+      '<button class="btn line wide" id="btnCsv">食品データをCSVで取り込む</button>' +
+      '<input type="file" id="fileCsv" accept=".csv,text/csv" hidden>' +
       '<button class="btn sub wide" id="btnWipe" style="margin-top:14px;color:var(--red)">すべての記録を消す</button>' +
       '</div>';
   }
@@ -174,6 +180,12 @@
       e.target.value = '';
       if (f) doImport(f);
     });
+    on(view, '#btnCsv', 'click', function () { view.querySelector('#fileCsv').click(); });
+    on(view, '#fileCsv', 'change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (f) doCsvImport(f);
+    });
     on(view, '#btnWipe', 'click', function () {
       if (!confirm('すべての食事・体重・運動・マイ食品の記録を削除します。よろしいですか？')) return;
       if (!confirm('本当に削除しますか？この操作は取り消せません。')) return;
@@ -230,6 +242,138 @@
       });
     };
     reader.readAsText(file);
+  }
+
+  /* ---------------- 食品データのCSV取り込み ---------------- */
+  var COL_ALIASES = {
+    name: ['名前', '商品名', 'メニュー名', 'メニュー', '品名', '食品名', 'name'],
+    brand: ['ブランド', '店舗', 'メーカー', 'チェーン', 'brand'],
+    servingLabel: ['単位', '分量', '一食', '1食', 'serving', 'unit'],
+    kcal: ['エネルギー', 'カロリー', 'kcal', 'エネルギー(kcal)', '熱量'],
+    protein: ['たんぱく質', 'タンパク質', 'たん白質', '蛋白質', 'protein'],
+    fat: ['脂質', 'fat'],
+    carb: ['炭水化物', 'carb', 'carbohydrate'],
+    sugarOnly: ['糖質'],
+    fiber: ['食物繊維', 'fiber'],
+    salt: ['食塩相当量', '食塩', '塩分', 'salt'],
+    satfat: ['飽和脂肪酸', 'satfat'],
+    barcode: ['バーコード', 'JAN', 'JANコード', 'barcode']
+  };
+
+  /* ダブルクォートに対応した簡易CSVパーサ */
+  function parseCsv(text) {
+    var rows = [], row = [], cell = '', q = false;
+    for (var i = 0; i < text.length; i++) {
+      var c = text[i];
+      if (q) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { cell += '"'; i++; }
+          else q = false;
+        } else cell += c;
+      } else if (c === '"') {
+        q = true;
+      } else if (c === ',') {
+        row.push(cell); cell = '';
+      } else if (c === '\n') {
+        row.push(cell); cell = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else if (c !== '\r') {
+        cell += c;
+      }
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+
+  function decodeText(buf) {
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(buf).replace(/^﻿/, '');
+    } catch (e) {
+      // 日本のサイト由来のCSVはShift_JISのことが多い
+      return new TextDecoder('shift_jis').decode(buf).replace(/^﻿/, '');
+    }
+  }
+
+  function normHeader(s) {
+    return String(s || '').toLowerCase()
+      .replace(/[（(].*?[)）]/g, '')
+      .replace(/[\s　_・]/g, '')
+      .trim();
+  }
+
+  function mapColumns(header) {
+    var map = {};
+    header.forEach(function (h, i) {
+      var n = normHeader(h);
+      if (!n) return;
+      Object.keys(COL_ALIASES).forEach(function (key) {
+        if (map[key] != null) return;
+        for (var j = 0; j < COL_ALIASES[key].length; j++) {
+          if (n === normHeader(COL_ALIASES[key][j])) { map[key] = i; return; }
+        }
+      });
+    });
+    return map;
+  }
+
+  function csvNum(v) {
+    if (v == null) return null;
+    var s = String(v).replace(/[^0-9.\-]/g, '');
+    var n = parseFloat(s);
+    return isFinite(n) ? n : null;
+  }
+
+  function doCsvImport(file) {
+    file.arrayBuffer().then(function (buf) {
+      var rows = parseCsv(decodeText(new Uint8Array(buf)));
+      if (rows.length < 2) { A().toast('データ行がありません'); return; }
+      var map = mapColumns(rows[0]);
+      if (map.name == null) {
+        A().toast('「名前」の列が見つかりません');
+        return;
+      }
+      var items = [];
+      for (var r = 1; r < rows.length; r++) {
+        var row = rows[r];
+        var name = (row[map.name] || '').trim();
+        if (!name) continue;
+        var carb = map.carb != null ? csvNum(row[map.carb]) : null;
+        if (carb == null && map.sugarOnly != null) carb = csvNum(row[map.sugarOnly]);
+        var nut = {
+          kcal: map.kcal != null ? (csvNum(row[map.kcal]) || 0) : 0,
+          protein: map.protein != null ? (csvNum(row[map.protein]) || 0) : 0,
+          fat: map.fat != null ? (csvNum(row[map.fat]) || 0) : 0,
+          carb: carb || 0,
+          fiber: map.fiber != null ? (csvNum(row[map.fiber]) || 0) : 0,
+          salt: map.salt != null ? (csvNum(row[map.salt]) || 0) : 0,
+          satfat: map.satfat != null ? (csvNum(row[map.satfat]) || 0) : 0
+        };
+        items.push({
+          name: name,
+          brand: map.brand != null ? (row[map.brand] || '').trim() : '',
+          basis: 'serving',
+          servingLabel: (map.servingLabel != null ? (row[map.servingLabel] || '').trim() : '') || '食',
+          barcode: map.barcode != null ? (row[map.barcode] || '').trim() : '',
+          nutrients: nut
+        });
+      }
+      if (!items.length) { A().toast('取り込める行がありませんでした'); return; }
+      if (!confirm(items.length + ' 件をマイ食品に追加します。よろしいですか？\n\n例: ' +
+        items.slice(0, 3).map(function (x) { return x.name + '（' + Math.round(x.nutrients.kcal) + 'kcal）'; }).join('、'))) return;
+
+      var i = 0;
+      (function next() {
+        if (i >= items.length) {
+          A().toast(items.length + ' 件を取り込みました');
+          A().render();
+          return;
+        }
+        S.MyFoods.put(items[i++]).then(next);
+      })();
+    }).catch(function (err) {
+      A().toast('読み込みに失敗: ' + ((err && err.message) || err));
+    });
   }
 
   Views.settings = { render: render };
