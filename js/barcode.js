@@ -5,7 +5,7 @@
   'use strict';
 
   var el = {};
-  var stream = null, zx = null, rafId = 0, detector = null;
+  var stream = null, rafId = 0, zxTimer = 0, zxReader = null, detector = null;
   var current = null;   // {resolve, done}
 
   function $(id) { return document.getElementById(id); }
@@ -34,6 +34,22 @@
   }
 
   function setMsg(t) { if (el.msg) el.msg.textContent = t; }
+
+  /* 読取ライブラリ(336KB)は初回スキャン時にだけ読み込む */
+  var zxingP = null;
+  function loadZXing() {
+    if (global.ZXing) return Promise.resolve(true);
+    if (zxingP) return zxingP;
+    zxingP = new Promise(function (resolve) {
+      var s = document.createElement('script');
+      s.src = 'vendor/zxing.min.js';
+      s.async = true;
+      s.onload = function () { resolve(!!global.ZXing); };
+      s.onerror = function () { zxingP = null; resolve(false); };
+      document.head.appendChild(s);
+    });
+    return zxingP;
+  }
 
   /* ---- 起動 ---- */
   function scan() {
@@ -76,7 +92,8 @@
 
   function stopCamera() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-    if (zx) { try { zx.reset(); } catch (e) { void e; } zx = null; }
+    if (zxTimer) { clearTimeout(zxTimer); zxTimer = 0; }
+    zxReader = null;
     if (stream) {
       stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { void e; } });
       stream = null;
@@ -105,7 +122,14 @@
         return;
       } catch (e) { detector = null; }
     }
-    loopZXing();
+    // iOS Safari には BarcodeDetector が無いのでZXingを使う
+    setMsg('読取ライブラリを準備中…');
+    loadZXing().then(function (ok) {
+      if (!current || current.done) return;
+      if (!ok) { setMsg('読取ライブラリを読み込めませんでした'); return; }
+      setMsg('バーコードを枠内に');
+      loopZXing();
+    });
   }
 
   function loopNative() {
@@ -124,22 +148,55 @@
     rafId = requestAnimationFrame(tick);
   }
 
-  function loopZXing() {
-    if (!global.ZXing) { setMsg('読取ライブラリを読み込めませんでした'); return; }
+  /* このZXingビルドの BrowserMultiFormatReader には decodeFromCanvas 等が無いため、
+     MultiFormatReader を直接使って1フレームずつ読む。 */
+  function makeReader() {
+    var Z = global.ZXing;
     var hints = new Map();
-    var F = global.ZXing.BarcodeFormat;
-    hints.set(global.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    var F = Z.BarcodeFormat;
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [
       F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.ITF, F.CODE_39
     ]);
-    hints.set(global.ZXing.DecodeHintType.TRY_HARDER, true);
-    zx = new global.ZXing.BrowserMultiFormatReader(hints, 250);
-    zx.decodeFromVideoElement(el.video, function (result, err) {
-      if (result && current && !current.done) {
-        var v = String(result.getText() || '').trim();
-        if (v) { vibrate(); finish(v); }
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    var mfr = new Z.MultiFormatReader();
+    mfr.setHints(hints);
+    return mfr;
+  }
+
+  function decodeCanvas(cv, reader) {
+    try {
+      var Z = global.ZXing;
+      var lum = new Z.HTMLCanvasElementLuminanceSource(cv);
+      var bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(lum));
+      var res = reader.decode(bmp);
+      return res ? String(res.getText() || '').trim() : null;
+    } catch (e) {
+      return null;
+    } finally {
+      try { reader.reset(); } catch (e2) { void e2; }
+    }
+  }
+
+  function loopZXing() {
+    if (!global.ZXing) { setMsg('読取ライブラリを読み込めませんでした'); return; }
+    zxReader = makeReader();
+    var cv = document.createElement('canvas');
+    var ctx = cv.getContext('2d', { willReadFrequently: true });
+
+    var tick = function () {
+      if (!current || current.done) return;
+      var v = el.video;
+      if (v && v.videoWidth) {
+        var scale = Math.min(1, 1280 / v.videoWidth);
+        cv.width = Math.round(v.videoWidth * scale);
+        cv.height = Math.round(v.videoHeight * scale);
+        ctx.drawImage(v, 0, 0, cv.width, cv.height);
+        var code = decodeCanvas(cv, zxReader);
+        if (code) { vibrate(); finish(code); return; }
       }
-      void err;
-    }).catch(function () { setMsg('読取を開始できませんでした'); });
+      zxTimer = setTimeout(tick, 180);
+    };
+    tick();
   }
 
   function vibrate() {
@@ -159,11 +216,11 @@
         try {
           var bd = new global.BarcodeDetector({ formats: FORMATS_BD });
           return bd.detect(img).then(function (list) {
-            return (list && list.length) ? String(list[0].rawValue) : decodeImageZXing(img);
-          }).catch(function () { return decodeImageZXing(img); });
-        } catch (e) { return decodeImageZXing(img); }
+            return (list && list.length) ? String(list[0].rawValue) : loadZXing().then(function () { return decodeImageZXing(img); });
+          }).catch(function () { return loadZXing().then(function () { return decodeImageZXing(img); }); });
+        } catch (e) { return loadZXing().then(function () { return decodeImageZXing(img); }); }
       }
-      return decodeImageZXing(img);
+      return loadZXing().then(function () { return decodeImageZXing(img); });
     }).then(function (code) {
       URL.revokeObjectURL(url);
       return code;
@@ -175,19 +232,20 @@
 
   function decodeImageZXing(img) {
     if (!global.ZXing) return null;
-    var reader = new global.ZXing.BrowserMultiFormatReader();
+    var reader = makeReader();
     var cv = document.createElement('canvas');
-    var max = 1600;
-    var sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-    cv.width = Math.round(img.naturalWidth * sc);
-    cv.height = Math.round(img.naturalHeight * sc);
-    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-    try {
-      var res = reader.decodeFromCanvas(cv);
-      return res ? String(res.getText()) : null;
-    } catch (e) {
-      return null;
+    var ctx = cv.getContext('2d', { willReadFrequently: true });
+    // 撮影画像は大きいことがあるので、いくつかの縮尺で試す
+    var sizes = [1600, 1000, 2400];
+    for (var i = 0; i < sizes.length; i++) {
+      var sc = Math.min(1, sizes[i] / Math.max(img.naturalWidth, img.naturalHeight));
+      cv.width = Math.round(img.naturalWidth * sc);
+      cv.height = Math.round(img.naturalHeight * sc);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      var code = decodeCanvas(cv, reader);
+      if (code) return code;
     }
+    return null;
   }
 
   /* ---- 商品情報のWeb検索(Open Food Facts) ---- */
