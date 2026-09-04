@@ -29,6 +29,10 @@
     toastTimer = setTimeout(function () { t.hidden = true; }, ms || 2200);
   }
 
+  /* シートは1枚を描き替えて使い回すので、「前の画面」は再描画する関数を
+     積んで覚えておく(数量入力から検索一覧へ戻り、続けて何品も追加できるように) */
+  var sheetStack = [];
+
   function openSheet(title, html, opts) {
     opts = opts || {};
     var sheet = document.getElementById('sheet');
@@ -40,15 +44,38 @@
     act.hidden = !opts.action;
     act.textContent = opts.action || '保存';
     act.onclick = opts.onAction || null;
+    // 前の画面が積まれていれば、ヘッダは「閉じる」ではなく「戻る」にする
+    var cl = sheet.querySelector('.sheet-close');
+    if (cl) {
+      var back = sheetStack.length > 0;
+      cl.dataset.close = back ? 'back' : '1';
+      cl.textContent = back ? '‹ 戻る' : '閉じる';
+    }
     sheet.hidden = false;
     return body;
   }
 
   function closeSheet() {
+    sheetStack = [];
     document.getElementById('sheet').hidden = true;
     document.getElementById('sheetBody').innerHTML = '';
     var act = document.getElementById('sheetAction');
     act.hidden = true; act.onclick = null;
+  }
+
+  function pushSheet(restore) {
+    if (typeof restore === 'function') sheetStack.push(restore);
+  }
+
+  // 戻り先を1つ捨てる(通り過ぎたい中間画面がある場合)
+  function dropSheet() { sheetStack.pop(); }
+
+  // 1つ前のシートへ戻る。積んでいなければ閉じる。
+  function backSheet() {
+    var restore = sheetStack.pop();
+    if (!restore) { closeSheet(); return false; }
+    restore();
+    return true;
   }
 
   function sheetOpen() { return !document.getElementById('sheet').hidden; }
@@ -151,7 +178,9 @@
     });
 
     document.getElementById('sheet').addEventListener('click', function (e) {
-      if (e.target.dataset && e.target.dataset.close) closeSheet();
+      if (!e.target.dataset || !e.target.dataset.close) return;
+      if (e.target.dataset.close === 'back') backSheet();
+      else closeSheet();
     });
 
     // 日付をまたいで開きっぱなしだった場合だけ「今日」に追従する。
@@ -195,6 +224,7 @@
   global.App = {
     state: state, render: render, setTab: setTab, setDate: setDate,
     esc: esc, toast: toast, openSheet: openSheet, closeSheet: closeSheet,
+    pushSheet: pushSheet, backSheet: backSheet, dropSheet: dropSheet,
     reloadSettings: reloadSettings, weightFor: weightFor, targetsFor: targetsFor,
     dateLabel: dateLabel
   };

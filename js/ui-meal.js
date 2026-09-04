@@ -28,7 +28,11 @@
       var totals = dt.totals;
       var burned = exercises.reduce(function (a, x) { return a + (x.kcal || 0); }, 0);
 
-      var html = summaryHtml(totals, tg, burned);
+      // カロリーしか持たない食品が混ざっていて、日次集計の補完も無い日は
+      // PFCが0のままになるので、その理由を出す
+      var noPfc = entries.filter(function (e) { return !hasPfc(e.nutrients); }).length;
+      var html = summaryHtml(totals, tg, burned,
+        (!dt.imported && noPfc) ? noPfc : 0, entries.length);
       SLOTS.forEach(function (sl) {
         html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }));
       });
@@ -40,7 +44,7 @@
     });
   }
 
-  function summaryHtml(t, tg, burned) {
+  function summaryHtml(t, tg, burned, noPfc, total) {
     var kcal = Math.round(t.kcal || 0);
     var goal = tg.kcal.goal;
     var net = kcal - burned;
@@ -63,7 +67,20 @@
           pfcCell('F 脂質', t.fat, tg.fat.goal, 'g') +
           pfcCell('C 炭水化物', t.carb, tg.carb.goal, 'g') +
         '</div>' +
+        (noPfc
+          ? '<div class="sum-note">' + noPfc + '／' + total +
+            '品はカロリーしか登録されていないため、PFCに反映されていません。' +
+            'その食品をタップ →「栄養素を入力」で補えます。</div>'
+          : '') +
       '</div>';
+  }
+
+  /* 取り込んだ過去データなど、カロリーしか持たない食品があるので、
+     「値が無い」を 0 と見せないための判定 */
+  function hasPfc(n) {
+    n = n || {};
+    return typeof n.protein === 'number' || typeof n.fat === 'number' ||
+      typeof n.carb === 'number';
   }
 
   function pfcCell(label, v, goal, unit) {
@@ -81,10 +98,12 @@
     } else {
       items.forEach(function (e) {
         var n = e.nutrients || {};
+        var pfc = hasPfc(n)
+          ? ' ・ P' + N.fmt(n.protein || 0) + ' F' + N.fmt(n.fat || 0) + ' C' + N.fmt(n.carb || 0)
+          : ' ・ <span class="muted">P— F— C—（栄養素は未登録）</span>';
         h += '<div class="item" data-entry="' + A().esc(e.id) + '">' +
           '<div class="grow"><div class="item-name ellip">' + A().esc(e.name) + '</div>' +
-          '<div class="item-sub">' + A().esc(amountText(e)) +
-          ' ・ P' + N.fmt(n.protein || 0) + ' F' + N.fmt(n.fat || 0) + ' C' + N.fmt(n.carb || 0) + '</div></div>' +
+          '<div class="item-sub">' + A().esc(amountText(e)) + pfc + '</div></div>' +
           '<div class="item-kcal">' + Math.round(n.kcal || 0) + '</div></div>';
       });
     }
@@ -128,92 +147,160 @@
     });
   }
 
-  /* ---------------- 追加シート ---------------- */
-  function openAdd(state, slot) {
+  /* ---------------- 追加シート ----------------
+     区分は「よく使う(実際に食べた回数順)／セット(自分で組み合わせた食事)／履歴」の3つ。
+     検索欄に文字を入れたときは区分をまたいで横断検索し、食材(成分表)もここに出す。 */
+  var SRC_TABS = [
+    { key: 'used', label: 'よく使う' },
+    { key: 'combo', label: 'セット' },
+    { key: 'hist', label: '履歴' }
+  ];
+
+  function openAdd(state, slot, opts) {
+    opts = opts || {};
+    var st = (A().state.settings) || {};
+    var src = opts.src || st.lastAddSrc || 'used';
+    if (!SRC_TABS.filter(function (t) { return t.key === src; }).length) src = 'used';
+    var histSlot = (opts.histSlot != null) ? opts.histSlot : (st.lastHistSlot || '');
+
     var html = '' +
       '<div class="seg" id="addSeg">' +
-        '<button class="on" data-src="common">よく使う</button>' +
-        '<button data-src="seibun">成分表</button>' +
-        '<button data-src="my">マイ食品</button>' +
-        '<button data-src="hist">履歴</button>' +
+        SRC_TABS.map(function (t) {
+          return '<button' + (t.key === src ? ' class="on"' : '') +
+            ' data-src="' + t.key + '">' + t.label + '</button>';
+        }).join('') +
       '</div>' +
       '<div class="row" style="margin-bottom:10px">' +
-        '<input type="text" id="q" placeholder="食品名で検索（例: ごはん、鶏むね）" autocomplete="off">' +
+        '<input type="text" id="q" placeholder="食品名で検索（例: とりむね、なす、ごはん）" ' +
+        'autocomplete="off" value="' + A().esc(opts.query || '') + '">' +
       '</div>' +
-      '<div class="row" style="gap:8px;margin-bottom:10px">' +
+      '<div id="slotFilter" class="chips-row"' + (src === 'hist' ? '' : ' hidden') + '>' +
+        [{ key: '', label: '全部' }].concat(SLOTS.map(function (s2) {
+          return { key: s2.key, label: s2.icon + ' ' + s2.name };
+        })).map(function (f) {
+          return '<button class="chip' + (f.key === histSlot ? ' on' : '') +
+            '" data-hslot="' + f.key + '">' + f.label + '</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="row" style="gap:8px;margin:10px 0">' +
         '<button class="btn line sm grow" id="btnScan">📷 バーコード</button>' +
         '<button class="btn line sm grow" id="btnManual">✏️ 手入力で登録</button>' +
       '</div>' +
       '<div id="results"></div>';
+
     var body = A().openSheet(slotName(slot) + 'に追加', html);
     var q = body.querySelector('#q');
     var results = body.querySelector('#results');
-    var src = 'common';
+    var slotFilter = body.querySelector('#slotFilter');
+
+    // 数量入力などから戻ってきたときに、同じ場所を開き直すための関数
+    function restorer() {
+      openAdd(state, slot, { src: src, query: q.value, histSlot: histSlot });
+    }
 
     /* 成分表に無い商品名・チェーン名のために、WEB検索して取り込む導線を出す */
     function webRow(text) {
       if (!text) return '';
-      return '<button class="btn line wide" data-web="1" style="margin-top:12px">' +
+      return '<button class="btn line wide" data-web="1" style="margin-top:14px">' +
         '🔎 「' + A().esc(text) + '」をWEBで検索して取り込む</button>' +
         '<div class="tiny muted" style="margin-top:6px">成分表に載っていない市販品・外食メニューは、' +
         'こちらから商品データベースを検索できます。</div>';
     }
 
-    function show(list, kind) {
-      var text = q.value.trim();
-      if (!list.length) {
-        results.innerHTML = '<div class="empty">' +
-          (kind === 'seibun' ? '該当する食品がありません' : 'まだ登録がありません') + '</div>' +
-          webRow(text);
-        return;
-      }
-      results.innerHTML = list.map(function (x) { return resRow(x, kind); }).join('') + webRow(text);
+    function group(title, hint, rows) {
+      if (!rows) return '';
+      return '<div class="tiny muted" style="margin:14px 0 4px;font-weight:700">' + A().esc(title) +
+        (hint ? '<span style="font-weight:400"> ・ ' + A().esc(hint) + '</span>' : '') + '</div>' + rows;
     }
 
-    function showCommon(data, text) {
-      var items = data.items;
-      if (text) {
-        var n = F.norm(text);
-        items = items.filter(function (x) {
-          return F.norm(x.label).indexOf(n) !== -1 || F.norm(x.src).indexOf(n) !== -1;
+    /* ---- 区分ごとの一覧(検索欄が空のとき) ---- */
+    function browse() {
+      if (src === 'used') {
+        S.Entries.topUsed(60).then(function (list) {
+          if (!list.length) {
+            results.innerHTML = '<div class="empty">まだ記録がありません。<br>' +
+              '食べたものを記録していくと、ここによく食べる順で並びます。</div>';
+            return;
+          }
+          results.innerHTML =
+            '<div class="tiny muted" style="margin-bottom:4px">実際に食べた回数の多い順</div>' +
+            list.map(function (x) { return resRow(x, 'used'); }).join('');
         });
-        show(items, 'common');
         return;
       }
-      var html2 = '';
-      data.cats.forEach(function (c) {
-        var group = items.filter(function (x) { return x.cat === c; });
-        if (!group.length) return;
-        html2 += '<div class="tiny muted" style="margin:12px 0 2px;font-weight:700">' +
-          A().esc(c) + '</div>' + group.map(function (x) { return resRow(x, 'common'); }).join('');
+      if (src === 'combo') {
+        S.Combos.all().then(function (list) {
+          var head = '<button class="btn line wide" id="newCombo" style="margin-bottom:10px">' +
+            '＋ 新しいセットを作る</button>' +
+            '<div class="tiny muted" style="margin-bottom:8px">' +
+            'いつも一緒に食べる組み合わせを1つにまとめておけます' +
+            '（例:「魚定食」= さば1切れ + ごはん150g + 豆腐 + 納豆）。' +
+            '選ぶと中身をまとめて記録します。</div>';
+          results.innerHTML = head + (list.length
+            ? list.map(function (x) { return resRow(x, 'combo'); }).join('')
+            : '<div class="empty">まだセットがありません</div>');
+        });
+        return;
+      }
+      S.Entries.recent(80, { slot: histSlot || null }).then(function (list) {
+        results.innerHTML = list.length
+          ? list.map(function (x) { return resRow(x, 'hist'); }).join('')
+          : '<div class="empty">' + (histSlot ? slotName(histSlot) + 'の' : '') +
+            '記録がありません</div>';
       });
-      results.innerHTML = html2 + webRow('');
+    }
+
+    /* ---- 横断検索(検索欄に文字があるとき) ---- */
+    function searchAll(text) {
+      var n = F.norm(text);
+      return Promise.all([
+        F.searchCommon(text, { limit: 24 }),
+        S.Entries.topUsed(400),
+        S.Entries.recent(400, { slot: histSlot || null }),
+        S.Combos.all(),
+        F.search(text, { limit: 24 })
+      ]).then(function (r) {
+        var commons = r[0];
+        var used = r[1].filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; }).slice(0, 12);
+        var usedNames = {};
+        used.forEach(function (x) { usedNames[x.name] = 1; });
+        var hist = r[2].filter(function (x) {
+          return F.norm(x.name).indexOf(n) !== -1 && !usedNames[x.name];
+        }).slice(0, 20);
+        var combos = r[3].filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; });
+        // 友好名で出したものと同じ食品番号は、生の成分表側からは省く
+        var shown = {};
+        commons.forEach(function (c) { shown[c.id] = 1; });
+        var seibun = r[4].filter(function (f) { return !shown[f.id]; }).slice(0, 16);
+
+        var html2 = '';
+        if (combos.length) {
+          html2 += group('セット', '', combos.map(function (x) { return resRow(x, 'combo'); }).join(''));
+        }
+        if (used.length) {
+          html2 += group('よく使う', '食べた回数順',
+            used.map(function (x) { return resRow(x, 'used'); }).join(''));
+        }
+        if (commons.length) {
+          html2 += group('食材', '1食分の目安つき',
+            commons.map(function (x) { return resRow(x, 'common'); }).join(''));
+        }
+        if (hist.length) {
+          html2 += group('履歴' + (histSlot ? '（' + slotName(histSlot) + '）' : ''), '',
+            hist.map(function (x) { return resRow(x, 'hist'); }).join(''));
+        }
+        if (seibun.length) {
+          html2 += group('成分表のほかの候補', '素材そのものの100gあたり',
+            seibun.map(function (x) { return resRow(x, 'seibun'); }).join(''));
+        }
+        results.innerHTML = (html2 || '<div class="empty">該当する食品がありません</div>') + webRow(text);
+      });
     }
 
     function doSearch() {
       var text = q.value.trim();
-      if (src === 'common') {
-        F.loadCommon().then(function (data) { showCommon(data, text); });
-      } else if (src === 'seibun') {
-        if (!text) { results.innerHTML = '<div class="empty">食品名を入力してください</div>'; return; }
-        F.search(text, { limit: 80 }).then(function (list) { show(list, 'seibun'); });
-      } else if (src === 'my') {
-        S.MyFoods.all().then(function (list) {
-          if (text) {
-            var n = F.norm(text);
-            list = list.filter(function (x) { return F.norm(x.name + (x.brand || '')).indexOf(n) !== -1; });
-          }
-          show(list, 'my');
-        });
-      } else {
-        S.Entries.recent(80).then(function (list) {
-          if (text) {
-            var n = F.norm(text);
-            list = list.filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; });
-          }
-          show(list, 'hist');
-        });
-      }
+      if (!text) { browse(); return; }
+      searchAll(text);
     }
 
     var timer = 0;
@@ -221,6 +308,7 @@
       clearTimeout(timer);
       timer = setTimeout(doSearch, 180);
     });
+
     body.querySelector('#addSeg').addEventListener('click', function (e) {
       var b = e.target.closest('[data-src]');
       if (!b) return;
@@ -228,48 +316,82 @@
       Array.prototype.forEach.call(body.querySelectorAll('#addSeg button'), function (x) {
         x.classList.toggle('on', x === b);
       });
+      slotFilter.hidden = (src !== 'hist');
+      S.Settings.save({ lastAddSrc: src }).then(function () { return A().reloadSettings(); });
       doSearch();
     });
-    body.querySelector('#btnScan').addEventListener('click', function () { scanFlow(state, slot); });
+
+    slotFilter.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-hslot]');
+      if (!b) return;
+      histSlot = b.dataset.hslot;
+      Array.prototype.forEach.call(slotFilter.querySelectorAll('button'), function (x) {
+        x.classList.toggle('on', x === b);
+      });
+      S.Settings.save({ lastHistSlot: histSlot }).then(function () { return A().reloadSettings(); });
+      doSearch();
+    });
+
+    body.querySelector('#btnScan').addEventListener('click', function () {
+      A().pushSheet(restorer); scanFlow(state, slot);
+    });
     body.querySelector('#btnManual').addEventListener('click', function () {
-      openManual(state, slot, null);
+      A().pushSheet(restorer); openManual(state, slot, null);
     });
 
     results.addEventListener('click', function (e) {
+      if (e.target.closest('#newCombo')) {
+        A().pushSheet(restorer); openComboEdit(state, slot, null);
+        return;
+      }
       if (e.target.closest('[data-web]')) {
-        openWebSearch(state, slot, q.value.trim());
+        A().pushSheet(restorer); openWebSearch(state, slot, q.value.trim());
         return;
       }
       var row = e.target.closest('[data-pick]');
       if (!row) return;
       var kind = row.dataset.kind, id = row.dataset.pick;
+      A().pushSheet(restorer);
+
       if (kind === 'common') {
-        F.loadCommon().then(function (data) {
-          var it = data.items.filter(function (x) { return x.label === id; })[0];
-          if (!it) return;
+        F.commonById(id).then(function (it) {
+          if (!it) { A().backSheet(); return; }
           F.byId(it.id).then(function (f) {
-            if (!f) return;
+            if (!f) { A().backSheet(); return; }
             var pick = fromSeibun(f);
             pick.name = it.label;
             pick.defaultAmount = it.g;
-            pick.note = f.n;
+            pick.note = it.unitLabel ? (it.unitLabel + ' ' + it.g + 'g ・ ' + f.n) : f.n;
             openAmount(state, slot, pick);
           });
         });
       } else if (kind === 'seibun') {
-        F.byId(id).then(function (f) { if (f) openAmount(state, slot, fromSeibun(f)); });
-      } else if (kind === 'my') {
-        S.MyFoods.get(id).then(function (m) { if (m) openAmount(state, slot, fromMyFood(m)); });
+        F.byId(id).then(function (f) {
+          if (f) openAmount(state, slot, fromSeibun(f)); else A().backSheet();
+        });
+      } else if (kind === 'combo') {
+        S.Combos.get(id).then(function (c) {
+          if (c) openComboUse(state, slot, c); else A().backSheet();
+        });
+      } else if (kind === 'used') {
+        // 実績: 直近に食べたときの記録をそのまま複製する
+        S.Entries.recent(400).then(function (rows) {
+          var e2 = rows.filter(function (x) { return x.name === id; })[0];
+          if (!e2) { A().backSheet(); return; }
+          var pick = fromEntry(e2);
+          pick.defaultAmount = parseFloat(row.dataset.amt) || pick.defaultAmount;
+          openAmount(state, slot, pick);
+        });
       } else {
         S.Entries.byDate(row.dataset.date).then(function (rows) {
           var src2 = rows.filter(function (x) { return x.id === id; })[0];
-          if (src2) openAmount(state, slot, fromEntry(src2));
+          if (src2) openAmount(state, slot, fromEntry(src2)); else A().backSheet();
         });
       }
     });
 
     doSearch();
-    setTimeout(function () { q.focus(); }, 60);
+    if (!opts.query) setTimeout(function () { q.focus(); }, 60);
   }
 
   function slotName(k) {
@@ -279,14 +401,34 @@
 
   function resRow(x, kind) {
     if (kind === 'common') {
-      return '<button class="res" data-pick="' + A().esc(x.label) + '" data-kind="common">' +
-        '<b>' + A().esc(x.label) + '</b><span>' + x.g + 'g ・ ' + x.kcal + ' kcal ／ ' +
+      return '<button class="res" data-pick="' + A().esc(x.key) + '" data-kind="common">' +
+        '<b>' + A().esc(x.label) + '</b><span>' +
+        (x.unitLabel ? A().esc(x.unitLabel) + ' ' : '') + x.g + 'g ・ ' + x.kcal + ' kcal ／ ' +
         A().esc(x.src) + '</span></button>';
     }
     if (kind === 'seibun') {
       return '<button class="res" data-pick="' + A().esc(x.id) + '" data-kind="seibun">' +
         '<b>' + A().esc(x.n) + '</b><span>' + A().esc(F.groupName(x.g)) +
         ' ・ 100gあたり ' + Math.round(x.kcal) + ' kcal</span></button>';
+    }
+    if (kind === 'used') {
+      // 代表の分量にそろえてカロリーを出す(最後に食べた量とは限らないため)
+      var last = x.latest || {};
+      var n2 = last.nutrients || {};
+      var f2 = (last.amount ? (x.topAmount / last.amount) : 1);
+      return '<button class="res" data-pick="' + A().esc(x.name) + '" data-kind="used" data-amt="' +
+        A().esc(String(x.topAmount)) + '"><b>' + A().esc(x.name) + '</b><span>' +
+        x.count + '回 ・ ' + amountText({ amount: x.topAmount, unit: x.topUnit }) +
+        ' ' + Math.round((n2.kcal || 0) * f2) + ' kcal ・ 最後 ' + A().esc(x.last) +
+        '</span></button>';
+    }
+    if (kind === 'combo') {
+      var kc = comboTotals(x).kcal;
+      return '<button class="res" data-pick="' + A().esc(x.id) + '" data-kind="combo">' +
+        '<b>🍱 ' + A().esc(x.name) + '</b><span>' + (x.items || []).length + '品 ・ ' +
+        Math.round(kc) + ' kcal ・ ' +
+        A().esc((x.items || []).map(function (i) { return i.name; }).join(' / ').slice(0, 40)) +
+        '</span></button>';
     }
     if (kind === 'my') {
       var per = x.basis === 'serving' ? ('1' + (x.servingLabel || '食') + 'あたり') : '100gあたり';
@@ -299,6 +441,202 @@
       A().esc(x.date) + '"><b>' + A().esc(x.name) + '</b><span>' + A().esc(amountText(x)) +
       ' ・ ' + Math.round((x.nutrients && x.nutrients.kcal) || 0) + ' kcal ・ ' + A().esc(x.date) +
       '</span></button>';
+  }
+
+  /* ---------------- セット(自分で組み合わせた食事) ---------------- */
+  function comboTotals(c) {
+    return F.sum((c.items || []).map(function (i) { return i.nutrients; }));
+  }
+
+  /* セットを選んだとき: 中身を確認してまとめて記録する */
+  function openComboUse(state, slot, c) {
+    var t = comboTotals(c);
+    var html = '<div class="card"><b>🍱 ' + A().esc(c.name) + '</b>' +
+      '<div class="tiny muted" style="margin-top:4px">' + (c.items || []).length + '品 ・ 合計 ' +
+      Math.round(t.kcal || 0) + ' kcal</div></div>' +
+      '<div class="card">' + (c.items || []).map(function (i) {
+        return '<div class="item"><div class="grow"><div class="item-name ellip">' +
+          A().esc(i.name) + '</div><div class="item-sub">' + A().esc(amountText(i)) + '</div></div>' +
+          '<div class="item-kcal">' + Math.round((i.nutrients && i.nutrients.kcal) || 0) +
+          '</div></div>';
+      }).join('') + '</div>' +
+      '<button class="btn wide" id="useCombo">' + A().esc(slotName(slot)) + 'にまとめて記録する</button>' +
+      '<button class="btn sub wide" id="editCombo" style="margin-top:8px">このセットを編集する</button>' +
+      '<button class="btn sub wide" id="delCombo" style="margin-top:8px">このセットを削除する</button>';
+
+    var body = A().openSheet('セット', html);
+    body.querySelector('#useCombo').addEventListener('click', function () {
+      var seq = Date.now();
+      var jobs = (c.items || []).map(function (i, idx) {
+        return S.Entries.put({
+          date: state.date, slot: slot, name: i.name, amount: i.amount, unit: i.unit,
+          nutrients: i.nutrients, ref: i.ref || { type: 'combo', id: c.id }, seq: seq + idx
+        });
+      });
+      Promise.all(jobs).then(function () {
+        return S.Combos.touch(c.id);
+      }).then(function () {
+        A().backSheet();
+        A().toast(c.name + ' を記録しました（' + (c.items || []).length + '品）');
+        A().render();
+      });
+    });
+    body.querySelector('#editCombo').addEventListener('click', function () {
+      openComboEdit(state, slot, c);
+    });
+    body.querySelector('#delCombo').addEventListener('click', function () {
+      if (!confirm('セット「' + c.name + '」を削除しますか？\n（記録済みの食事は消えません）')) return;
+      S.Combos.remove(c.id).then(function () {
+        A().toast('削除しました');
+        A().backSheet();
+      });
+    });
+  }
+
+  /* セットを作る/編集する */
+  function openComboEdit(state, slot, combo) {
+    var draft = {
+      id: (combo && combo.id) || null,
+      name: (combo && combo.name) || '',
+      items: (combo && combo.items) ? combo.items.slice() : []
+    };
+
+    function draw() {
+      var t = F.sum(draft.items.map(function (i) { return i.nutrients; }));
+      var html = '<div class="card">' +
+        '<label class="fld"><span>セットの名前</span>' +
+        '<input type="text" id="cName" placeholder="例: 魚定食" value="' +
+        A().esc(draft.name) + '"></label></div>' +
+        '<div class="card"><h3>中身（' + draft.items.length + '品 ・ 合計 ' +
+        Math.round(t.kcal || 0) + ' kcal）</h3>' +
+        (draft.items.length
+          ? draft.items.map(function (i, idx) {
+            return '<div class="item"><div class="grow"><div class="item-name ellip">' +
+              A().esc(i.name) + '</div><div class="item-sub">' + A().esc(amountText(i)) + '</div></div>' +
+              '<div class="item-kcal">' + Math.round((i.nutrients && i.nutrients.kcal) || 0) + '</div>' +
+              '<button class="chip" data-rm="' + idx + '" style="margin-left:8px">削除</button></div>';
+          }).join('')
+          : '<div class="empty">「＋ 食品を追加」で中身を入れてください</div>') +
+        '<div class="add-row"><button class="btn sub sm" id="cAdd">＋ 食品を追加</button></div></div>' +
+        '<button class="btn wide" id="cSave">セットを保存する</button>';
+
+      var body = A().openSheet(draft.id ? 'セットを編集' : '新しいセット', html);
+      var nameInput = body.querySelector('#cName');
+      nameInput.addEventListener('input', function () { draft.name = nameInput.value; });
+
+      body.querySelector('#cAdd').addEventListener('click', function () {
+        draft.name = nameInput.value;
+        // 中身を選ぶあいだ、この編集画面を戻り先として積んでおく
+        A().pushSheet(draw);
+        openComboPick(state, function (item) {
+          draft.items.push(item);
+          // 数量シートが積んだ「食品を選ぶ」の戻り先は通り過ぎて、編集画面へ戻る
+          A().dropSheet();
+          A().backSheet();
+        });
+      });
+
+      body.querySelector('.card + .card').addEventListener('click', function (e) {
+        var b = e.target.closest('[data-rm]');
+        if (!b) return;
+        draft.name = nameInput.value;
+        draft.items.splice(+b.dataset.rm, 1);
+        draw();
+      });
+
+      body.querySelector('#cSave').addEventListener('click', function () {
+        draft.name = nameInput.value.trim();
+        if (!draft.name) { A().toast('セットの名前を入れてください'); return; }
+        if (!draft.items.length) { A().toast('中身を1品以上入れてください'); return; }
+        S.Combos.put({
+          id: draft.id || undefined, name: draft.name, items: draft.items,
+          useCount: (combo && combo.useCount) || 0, usedAt: (combo && combo.usedAt) || 0
+        }).then(function () {
+          A().toast('セット「' + draft.name + '」を保存しました');
+          A().backSheet();
+        });
+      });
+    }
+
+    draw();
+  }
+
+  /* セットの中身を1品選ぶ(記録はせず、呼び出し元へ渡す) */
+  function openComboPick(state, onPick) {
+    var html = '<div class="row" style="margin-bottom:10px">' +
+      '<input type="text" id="cq" placeholder="食品名で検索（例: さば、ごはん、納豆）" autocomplete="off">' +
+      '</div><div id="cres"></div>';
+    var body = A().openSheet('セットに入れる食品', html);
+    var q = body.querySelector('#cq');
+    var out = body.querySelector('#cres');
+
+    function show() {
+      var text = q.value.trim();
+      if (!text) {
+        S.Entries.topUsed(40).then(function (list) {
+          out.innerHTML = '<div class="tiny muted" style="margin-bottom:4px">よく食べる順</div>' +
+            (list.length ? list.map(function (x) { return resRow(x, 'used'); }).join('')
+              : '<div class="empty">記録がありません</div>');
+        });
+        return;
+      }
+      Promise.all([
+        F.searchCommon(text, { limit: 20 }),
+        S.Entries.topUsed(400),
+        F.search(text, { limit: 20 })
+      ]).then(function (r) {
+        var n = F.norm(text);
+        var used = r[1].filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; }).slice(0, 10);
+        var shown = {};
+        r[0].forEach(function (c) { shown[c.id] = 1; });
+        var seibun = r[2].filter(function (f) { return !shown[f.id]; }).slice(0, 14);
+        out.innerHTML =
+          (used.length ? used.map(function (x) { return resRow(x, 'used'); }).join('') : '') +
+          (r[0].length ? r[0].map(function (x) { return resRow(x, 'common'); }).join('') : '') +
+          (seibun.length ? seibun.map(function (x) { return resRow(x, 'seibun'); }).join('') : '') ||
+          '<div class="empty">該当する食品がありません</div>';
+      });
+    }
+
+    var timer = 0;
+    q.addEventListener('input', function () {
+      clearTimeout(timer); timer = setTimeout(show, 180);
+    });
+
+    out.addEventListener('click', function (e) {
+      var row = e.target.closest('[data-pick]');
+      if (!row) return;
+      var kind = row.dataset.kind, id = row.dataset.pick;
+      function toAmount(pick) {
+        A().pushSheet(function () { openComboPick(state, onPick); });
+        openAmount(state, null, pick, null, onPick);
+      }
+      if (kind === 'common') {
+        F.commonById(id).then(function (it) {
+          if (!it) return;
+          F.byId(it.id).then(function (f) {
+            if (!f) return;
+            var pick = fromSeibun(f);
+            pick.name = it.label; pick.defaultAmount = it.g;
+            pick.note = it.unitLabel ? (it.unitLabel + ' ' + it.g + 'g') : f.n;
+            toAmount(pick);
+          });
+        });
+      } else if (kind === 'seibun') {
+        F.byId(id).then(function (f) { if (f) toAmount(fromSeibun(f)); });
+      } else {
+        S.Entries.recent(400).then(function (rows) {
+          var e2 = rows.filter(function (x) { return x.name === id; })[0];
+          if (!e2) return;
+          var pick = fromEntry(e2);
+          pick.defaultAmount = parseFloat(row.dataset.amt) || pick.defaultAmount;
+          toAmount(pick);
+        });
+      }
+    });
+
+    show();
+    setTimeout(function () { q.focus(); }, 60);
   }
 
   /* ---- 選択された食品を共通形式へ ---- */
@@ -331,8 +669,9 @@
   }
 
   /* ---------------- 数量入力シート ---------------- */
-  function openAmount(state, slot, pick, existingId) {
+  function openAmount(state, slot, pick, existingId, onPick) {
     var isG = (pick.basis === '100g');
+    var lacksPfc = !hasPfc(pick.per);
     var quick = isG ? [30, 50, 80, 100, 150, 200, 250] : [0.5, 1, 1.5, 2, 3];
     var html = '' +
       '<div class="card"><b>' + A().esc(pick.name) + '</b>' +
@@ -347,10 +686,20 @@
         '<hr class="sep">' +
         '<div id="preview"></div>' +
       '</div>' +
-      '<button class="btn wide" id="save">' + (existingId ? '更新する' : 'この内容で記録する') + '</button>' +
+      (lacksPfc
+        ? '<div class="card"><b>栄養素が登録されていません</b>' +
+          '<div class="small muted" style="margin-top:6px">この食品はカロリーだけの登録なので、' +
+          'たんぱく質・脂質・炭水化物に反映されません。パッケージの表示を見て入力しておくと、' +
+          '次からはこの食品にも栄養素が付きます。</div>' +
+          '<button class="btn line wide" id="fillNut" style="margin-top:10px">' +
+          '栄養素を入力する</button></div>'
+        : '') +
+      '<button class="btn wide" id="save">' +
+      (onPick ? 'セットに入れる' : (existingId ? '更新する' : 'この内容で記録する')) + '</button>' +
       (existingId ? '<button class="btn sub wide" id="del" style="margin-top:8px">削除する</button>' : '');
 
-    var body = A().openSheet(existingId ? '記録を編集' : slotName(slot) + 'に追加', html);
+    var body = A().openSheet(
+      onPick ? 'セットに入れる分量' : (existingId ? '記録を編集' : slotName(slot) + 'に追加'), html);
     var amt = body.querySelector('#amt');
     var prev = body.querySelector('#preview');
 
@@ -384,9 +733,30 @@
       amt.value = b.dataset.q;
       draw();
     });
+    var fill = body.querySelector('#fillNut');
+    if (fill) {
+      fill.addEventListener('click', function () {
+        A().pushSheet(function () { openAmount(state, slot, pick, existingId, onPick); });
+        openManual(state, slot, {
+          name: pick.name,
+          basis: isG ? '100g' : 'serving',
+          servingLabel: isG ? '' : pick.unit,
+          kcal: pick.per && pick.per.kcal
+        }, existingId);
+      });
+    }
+
     body.querySelector('#save').addEventListener('click', function () {
       var c = calc();
       if (!c.amount) { A().toast('数量を入力してください'); return; }
+      // セットの中身を選んでいるときは記録せず、呼び出し元へ1品として返す
+      if (onPick) {
+        onPick({
+          name: pick.name, amount: c.amount, unit: pick.unit,
+          nutrients: c.n, ref: pick.ref
+        });
+        return;
+      }
       var rec = {
         id: existingId || undefined,
         date: state.date, slot: slot, name: pick.name,
@@ -394,9 +764,10 @@
       };
       S.Entries.put(rec).then(function () {
         if (pick.ref && pick.ref.type === 'my') S.MyFoods.touch(pick.ref.id);
-        A().closeSheet();
-        A().toast('記録しました');
         A().render();
+        // 続けて何品も足せるよう、閉じずに1つ前(検索一覧)へ戻る
+        if (existingId) { A().closeSheet(); A().toast('更新しました'); }
+        else { A().backSheet(); A().toast(pick.name + ' を記録しました'); }
       });
     });
     var delBtn = body.querySelector('#del');
@@ -421,7 +792,7 @@
   }
 
   /* ---------------- 手入力登録 ---------------- */
-  function openManual(state, slot, preset) {
+  function openManual(state, slot, preset, existingId) {
     preset = preset || {};
     var html = '' +
       '<div class="card">' +
@@ -472,7 +843,8 @@
       };
       S.MyFoods.put(rec).then(function (saved) {
         A().toast('マイ食品に保存しました');
-        openAmount(state, slot, fromMyFood(saved));
+        // 既存の記録に栄養素を足しに来た場合は、同じ記録を更新する(増やさない)
+        openAmount(state, slot, fromMyFood(saved), existingId);
       });
     });
   }

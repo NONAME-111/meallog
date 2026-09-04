@@ -89,6 +89,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .pfc div{background:rgba(255,255,255,.16);border-radius:8px;padding:6px 8px;text-align:center}
 .pfc b{display:block;font-size:15px}
 .pfc span{font-size:10px;opacity:.85}
+/* カロリーしか登録が無い食品が混ざっていて、PFCに反映できないときの注記 */
+.sum-note{margin-top:9px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.16);
+  font-size:11px;line-height:1.5}
+
+/* 履歴の絞り込み(朝食/昼食/夕食/間食) */
+.chips-row{display:flex;flex-wrap:wrap;margin-bottom:2px}
+.chips-row[hidden]{display:none}
+.chips-row .chip{cursor:pointer}
 
 /* ---- 食事スロット ---- */
 .slot-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}

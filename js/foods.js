@@ -244,10 +244,55 @@
     return out;
   }
 
+  /* ---- 「食材」(普段の呼び名 + よみ + 1食分の目安) ---- */
+  function commonIndex() {
+    return loadCommon().then(function (data) {
+      if (!data._indexed) {
+        data.items.forEach(function (it) {
+          it._n = norm(it.label) + ' ' + norm(it.yomi || '') + ' ' + norm(it.src || '');
+        });
+        data._byKey = {};
+        data.items.forEach(function (it) { data._byKey[it.key] = it; });
+        data._indexed = true;
+      }
+      return data;
+    });
+  }
+
+  /* 「とりむね」「なす」のような普段の呼び名・よみで引く。
+     成分表そのものは「＜鳥肉類＞ にわとり…」なので、こちらを先に当てる。 */
+  function searchCommon(query, opts) {
+    opts = opts || {};
+    var raw = String(query || '').trim();
+    if (!raw) return Promise.resolve([]);
+    var q = norm(raw);
+    return commonIndex().then(function (data) {
+      var hits = [];
+      data.items.forEach(function (it) {
+        var pos = it._n.indexOf(q);
+        if (pos === -1) return;
+        // 表示名の先頭で一致したものを上に
+        var sc = (norm(it.label).indexOf(q) === 0) ? 100
+          : (norm(it.yomi || '').indexOf(q) === 0 ? 90 : (pos === 0 ? 70 : 40));
+        hits.push({ it: it, sc: sc });
+      });
+      hits.sort(function (a, b) {
+        if (b.sc !== a.sc) return b.sc - a.sc;
+        return a.it.label.length - b.it.label.length;
+      });
+      return hits.slice(0, opts.limit || 24).map(function (h) { return h.it; });
+    });
+  }
+
+  function commonById(key) {
+    return commonIndex().then(function (data) { return data._byKey[key] || null; });
+  }
+
   function meta(key) { return NUTRIENT_META[key] || [key, '']; }
 
   global.Foods = {
     load: load, loadCommon: loadCommon, search: search, byId: byId, scale: scale, sum: sum,
+    searchCommon: searchCommon, commonById: commonById,
     groupName: groupName, meta: meta, norm: norm, round: round, sugarOf: sugarOf,
     KEYS: NUTRIENT_KEYS, META: NUTRIENT_META,
     ready: function () { return !!DB; },

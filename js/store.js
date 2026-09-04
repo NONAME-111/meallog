@@ -4,7 +4,7 @@
   'use strict';
 
   var DB_NAME = 'meallog';
-  var DB_VER = 2;
+  var DB_VER = 3;
   var dbp = null;
 
   function open() {
@@ -35,6 +35,11 @@
         // 他アプリから取り込んだ「その日の栄養素合計」(個々の食品に栄養値が無い場合の補完用)
         if (!db.objectStoreNames.contains('daily')) {
           db.createObjectStore('daily', { keyPath: 'date' });
+        }
+        // 自分で組み合わせた食事(例:「魚定食」= サバ + ごはん + 豆腐 + 納豆)
+        if (!db.objectStoreNames.contains('combos')) {
+          var cb = db.createObjectStore('combos', { keyPath: 'id' });
+          cb.createIndex('used', 'usedAt');
         }
         void ev;
       };
@@ -129,10 +134,14 @@
     remove: function (id) {
       return run('entries', 'readwrite', function (s) { return reqp(s.delete(id)); });
     },
-    recent: function (limit) {
+    recent: function (limit, opts) {
+      opts = opts || {};
       return run('entries', 'readonly', function (s) {
         return reqp(s.getAll());
       }).then(function (rows) {
+        if (opts.slot) {
+          rows = rows.filter(function (r) { return r.slot === opts.slot; });
+        }
         rows.sort(function (a, b) { return (b.seq || 0) - (a.seq || 0); });
         var seen = {}, out = [];
         for (var i = 0; i < rows.length && out.length < (limit || 60); i++) {
@@ -142,6 +151,86 @@
           out.push(rows[i]);
         }
         return out;
+      });
+    },
+
+    /* 実際に食べた回数のランキング。「よく使う」はこれを出す。
+       同じ食品名でまとめ、最後に食べた日と代表的な分量を添える。 */
+    topUsed: function (limit, opts) {
+      opts = opts || {};
+      return run('entries', 'readonly', function (s) {
+        return reqp(s.getAll());
+      }).then(function (rows) {
+        rows = rows || [];
+        if (opts.slot) rows = rows.filter(function (r) { return r.slot === opts.slot; });
+        if (opts.since) rows = rows.filter(function (r) { return r.date >= opts.since; });
+        var map = {};
+        rows.forEach(function (r) {
+          var k = r.name;
+          var g = map[k];
+          if (!g) {
+            g = map[k] = { name: r.name, count: 0, last: '', latest: r, amounts: {} };
+          }
+          g.count++;
+          var a = String(r.amount) + '|' + (r.unit || 'g');
+          g.amounts[a] = (g.amounts[a] || 0) + 1;
+          if (!g.last || r.date > g.last) { g.last = r.date; g.latest = r; }
+        });
+        var out = [];
+        for (var k2 in map) {
+          var g2 = map[k2];
+          // 一番よく使った分量を代表にする
+          var best = null, bestN = -1;
+          for (var a2 in g2.amounts) {
+            if (g2.amounts[a2] > bestN) { bestN = g2.amounts[a2]; best = a2; }
+          }
+          var pa = String(best || '').split('|');
+          g2.topAmount = parseFloat(pa[0]);
+          g2.topUnit = pa[1] || 'g';
+          delete g2.amounts;
+          out.push(g2);
+        }
+        out.sort(function (a, b) {
+          if (b.count !== a.count) return b.count - a.count;
+          return a.last < b.last ? 1 : -1;
+        });
+        return out.slice(0, limit || 60);
+      });
+    }
+  };
+
+  /* ---------------- 自分で組み合わせた食事(セット) ---------------- */
+  var Combos = {
+    all: function () {
+      return run('combos', 'readonly', function (s) { return reqp(s.getAll()); })
+        .then(function (rows) {
+          return (rows || []).sort(function (a, b) {
+            if ((b.useCount || 0) !== (a.useCount || 0)) return (b.useCount || 0) - (a.useCount || 0);
+            return (b.usedAt || 0) - (a.usedAt || 0);
+          });
+        });
+    },
+    get: function (id) {
+      return run('combos', 'readonly', function (s) { return reqp(s.get(id)); });
+    },
+    put: function (rec) {
+      if (!rec.id) rec.id = uid();
+      if (rec.useCount == null) rec.useCount = 0;
+      if (rec.usedAt == null) rec.usedAt = 0;
+      return run('combos', 'readwrite', function (s) { return reqp(s.put(rec)); })
+        .then(function () { return rec; });
+    },
+    remove: function (id) {
+      return run('combos', 'readwrite', function (s) { return reqp(s.delete(id)); });
+    },
+    touch: function (id) {
+      return run('combos', 'readwrite', function (s) {
+        return reqp(s.get(id)).then(function (r) {
+          if (!r) return null;
+          r.useCount = (r.useCount || 0) + 1;
+          r.usedAt = Date.now();
+          return reqp(s.put(r));
+        });
       });
     }
   };
@@ -297,7 +386,9 @@
       { id: 'kintore', label: '筋トレ', type: 'count', unit: '回' }
     ],
     toiletTypes: ['小', '大'],
-    lastTab: 'meal'
+    lastTab: 'meal',
+    lastAddSrc: 'used',       // 追加シートで最後に見ていた区分
+    lastHistSlot: ''          // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)
   };
 
   var Settings = {
@@ -328,11 +419,13 @@
       run('exercise', 'readonly', function (s) { return reqp(s.getAll()); }),
       run('myfoods', 'readonly', function (s) { return reqp(s.getAll()); }),
       Settings.get(),
-      run('daily', 'readonly', function (s) { return reqp(s.getAll()); })
+      run('daily', 'readonly', function (s) { return reqp(s.getAll()); }),
+      run('combos', 'readonly', function (s) { return reqp(s.getAll()); })
     ]).then(function (r) {
       return {
-        app: 'meallog', version: 2, exportedAt: new Date().toISOString(),
-        entries: r[0], body: r[1], exercise: r[2], myfoods: r[3], settings: r[4], daily: r[5]
+        app: 'meallog', version: 3, exportedAt: new Date().toISOString(),
+        entries: r[0], body: r[1], exercise: r[2], myfoods: r[3], settings: r[4],
+        daily: r[5], combos: r[6]
       };
     });
   }
@@ -340,21 +433,23 @@
   function importAll(data, mode) {
     if (!data || data.app !== 'meallog') return Promise.reject(new Error('形式が違います'));
     var replace = (mode === 'replace');
-    return run(['entries', 'body', 'exercise', 'myfoods', 'settings', 'daily'], 'readwrite', function (st) {
-      var entries = st[0], body = st[1], ex = st[2], my = st[3], se = st[4], da = st[5];
-      if (replace) { entries.clear(); body.clear(); ex.clear(); my.clear(); da.clear(); }
-      (data.entries || []).forEach(function (r) { entries.put(r); });
-      (data.body || []).forEach(function (r) { body.put(r); });
-      (data.exercise || []).forEach(function (r) { ex.put(r); });
-      (data.myfoods || []).forEach(function (r) { my.put(r); });
-      (data.daily || []).forEach(function (r) { da.put(r); });
-      if (data.settings) se.put({ k: 'main', v: data.settings });
-      return true;
-    });
+    return run(['entries', 'body', 'exercise', 'myfoods', 'settings', 'daily', 'combos'],
+      'readwrite', function (st) {
+        var entries = st[0], body = st[1], ex = st[2], my = st[3], se = st[4], da = st[5], cb = st[6];
+        if (replace) { entries.clear(); body.clear(); ex.clear(); my.clear(); da.clear(); cb.clear(); }
+        (data.entries || []).forEach(function (r) { entries.put(r); });
+        (data.body || []).forEach(function (r) { body.put(r); });
+        (data.exercise || []).forEach(function (r) { ex.put(r); });
+        (data.myfoods || []).forEach(function (r) { my.put(r); });
+        (data.daily || []).forEach(function (r) { da.put(r); });
+        (data.combos || []).forEach(function (r) { cb.put(r); });
+        if (data.settings) se.put({ k: 'main', v: data.settings });
+        return true;
+      });
   }
 
   function wipeAll() {
-    return run(['entries', 'body', 'exercise', 'myfoods', 'daily'], 'readwrite', function (st) {
+    return run(['entries', 'body', 'exercise', 'myfoods', 'daily', 'combos'], 'readwrite', function (st) {
       st.forEach(function (s) { s.clear(); });
       return true;
     });
@@ -363,7 +458,7 @@
   global.Store = {
     uid: uid, ymd: ymd, parseYmd: parseYmd, shiftYmd: shiftYmd,
     Entries: Entries, Body: Body, Exercise: Exercise, MyFoods: MyFoods,
-    Settings: Settings, Daily: Daily, dayTotals: dayTotals,
+    Settings: Settings, Daily: Daily, Combos: Combos, dayTotals: dayTotals,
     exportAll: exportAll, importAll: importAll, wipeAll: wipeAll,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
