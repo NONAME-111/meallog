@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#3aa76d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ミール">
+<title>ミールログ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" href="icons/favicon-64.png">
+<link rel="stylesheet" href="css/style.css?v=20260904-01">
+</head>
+<body>
+
+<header id="appHeader">
+  <button id="datePrev" class="hdr-btn" aria-label="前の日">‹</button>
+  <div class="hdr-center">
+    <button id="dateLabel" class="date-label">今日</button>
+    <span id="verLabel" class="ver">Claude ver01</span>
+  </div>
+  <button id="dateNext" class="hdr-btn" aria-label="次の日">›</button>
+</header>
+
+<main id="view" aria-live="polite"></main>
+
+<nav id="tabbar">
+  <button class="tab is-active" data-tab="meal"><span class="ic">🍚</span><span>記録</span></button>
+  <button class="tab" data-tab="body"><span class="ic">⚖️</span><span>カラダ</span></button>
+  <button class="tab" data-tab="graph"><span class="ic">📈</span><span>グラフ</span></button>
+  <button class="tab" data-tab="advice"><span class="ic">💬</span><span>採点</span></button>
+  <button class="tab" data-tab="settings"><span class="ic">⚙️</span><span>設定</span></button>
+</nav>
+
+<!-- 汎用シート(下からせり上がるモーダル) -->
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-backdrop" data-close="1"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true">
+    <div class="sheet-head">
+      <button class="sheet-close" data-close="1">閉じる</button>
+      <h2 id="sheetTitle">　</h2>
+      <button class="sheet-action" id="sheetAction" hidden>保存</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+
+<!-- バーコードスキャナ -->
+<div id="scanner" class="scanner" hidden>
+  <video id="scanVideo" playsinline muted></video>
+  <div class="scan-frame"></div>
+  <div class="scan-bar">
+    <button id="scanClose" class="scan-btn">閉じる</button>
+    <span id="scanMsg">バーコードを枠内に</span>
+    <button id="scanPhoto" class="scan-btn">写真で読取</button>
+  </div>
+  <input type="file" id="scanFile" accept="image/*" capture="environment" hidden>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="js/store.js?v=20260904-01"></script>
+<script src="js/foods.js?v=20260904-01"></script>
+<script src="js/nutrition.js?v=20260904-01"></script>
+<script src="js/barcode.js?v=20260904-01"></script>
+<script src="js/ui-meal.js?v=20260904-01"></script>
+<script src="js/ui-body.js?v=20260904-01"></script>
+<script src="js/ui-graph.js?v=20260904-01"></script>
+<script src="js/ui-advice.js?v=20260904-01"></script>
+<script src="js/ui-settings.js?v=20260904-01"></script>
+<script src="js/app.js?v=20260904-01"></script>
+</body>
+</html>

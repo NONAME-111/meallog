@@ -1,0 +1,4 @@
+# 個人データは絶対に入れない
+*.local.json
+work/
+collected/
