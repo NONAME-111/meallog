@@ -150,13 +150,24 @@
     var results = body.querySelector('#results');
     var src = 'common';
 
+    /* 成分表に無い商品名・チェーン名のために、WEB検索して取り込む導線を出す */
+    function webRow(text) {
+      if (!text) return '';
+      return '<button class="btn line wide" data-web="1" style="margin-top:12px">' +
+        '🔎 「' + A().esc(text) + '」をWEBで検索して取り込む</button>' +
+        '<div class="tiny muted" style="margin-top:6px">成分表に載っていない市販品・外食メニューは、' +
+        'こちらから商品データベースを検索できます。</div>';
+    }
+
     function show(list, kind) {
+      var text = q.value.trim();
       if (!list.length) {
         results.innerHTML = '<div class="empty">' +
-          (kind === 'seibun' ? '該当する食品がありません' : 'まだ登録がありません') + '</div>';
+          (kind === 'seibun' ? '該当する食品がありません' : 'まだ登録がありません') + '</div>' +
+          webRow(text);
         return;
       }
-      results.innerHTML = list.map(function (x) { return resRow(x, kind); }).join('');
+      results.innerHTML = list.map(function (x) { return resRow(x, kind); }).join('') + webRow(text);
     }
 
     function showCommon(data, text) {
@@ -176,7 +187,7 @@
         html2 += '<div class="tiny muted" style="margin:12px 0 2px;font-weight:700">' +
           A().esc(c) + '</div>' + group.map(function (x) { return resRow(x, 'common'); }).join('');
       });
-      results.innerHTML = html2;
+      results.innerHTML = html2 + webRow('');
     }
 
     function doSearch() {
@@ -225,6 +236,10 @@
     });
 
     results.addEventListener('click', function (e) {
+      if (e.target.closest('[data-web]')) {
+        openWebSearch(state, slot, q.value.trim());
+        return;
+      }
       var row = e.target.closest('[data-pick]');
       if (!row) return;
       var kind = row.dataset.kind, id = row.dataset.pick;
@@ -422,7 +437,7 @@
           '<input type="text" id="mServ" value="' + A().esc(preset.servingLabel || '個') + '" placeholder="個 / 袋 / 食"></label>' +
       '</div>' +
       '<div class="card"><h3>栄養成分</h3>' +
-        num('mKcal', 'エネルギー (kcal)', preset.kcal) +
+        num('mKcal', 'エネルギー (kcal)', preset.kcal, 0) +
         '<div class="grid2">' + num('mP', 'たんぱく質 (g)', preset.protein) + num('mF', '脂質 (g)', preset.fat) + '</div>' +
         '<div class="grid2">' + num('mC', '炭水化物 (g)', preset.carb) + num('mSalt', '食塩相当量 (g)', preset.salt) + '</div>' +
         '<div class="grid2">' + num('mFib', '食物繊維 (g)', preset.fiber) + num('mSat', '飽和脂肪酸 (g)', preset.satfat) + '</div>' +
@@ -462,9 +477,17 @@
     });
   }
 
-  function num(id, label, val) {
+  function num(id, label, val, digits) {
     return '<label class="fld"><span>' + label + '</span><input type="number" inputmode="decimal" ' +
-      'step="0.1" id="' + id + '" value="' + (val == null ? '' : val) + '"></label>';
+      'step="0.1" id="' + id + '" value="' + (val == null ? '' : round(val, digits)) + '"></label>';
+  }
+  // Web検索やバーコードから来る値は 1食分から100gあたりへ割り戻した生の小数なので、
+  // フォームには 127.692307692308 のような数字を出さないよう丸める
+  function round(val, digits) {
+    var x = parseFloat(val);
+    if (!isFinite(x)) return '';
+    var p = Math.pow(10, digits == null ? 2 : digits);
+    return String(Math.round(x * p) / p);
   }
   function v(body, sel) {
     var x = parseFloat(body.querySelector(sel).value);
@@ -493,6 +516,76 @@
         });
       });
     });
+  }
+
+  /* ---------------- 商品名でのWEB検索して取り込む ---------------- */
+  function openWebSearch(state, slot, query) {
+    var html = '<div class="row" style="margin-bottom:10px">' +
+      '<input type="text" id="wq" placeholder="商品名・チェーン名（例: サラダチキン）" ' +
+      'value="' + A().esc(query || '') + '" autocomplete="off">' +
+      '</div>' +
+      '<button class="btn wide" id="wgo">検索する</button>' +
+      '<div id="wres" style="margin-top:12px"></div>';
+    var body = A().openSheet('WEBで検索して取り込む', html);
+    var input = body.querySelector('#wq');
+    var out = body.querySelector('#wres');
+
+    function run() {
+      var text = input.value.trim();
+      if (!text) { out.innerHTML = '<div class="empty">検索する言葉を入れてください</div>'; return; }
+      out.innerHTML = '<div class="empty">検索中…</div>';
+      global.Barcode.searchByName(text, { limit: 30 }).then(function (list) {
+        if (!list.length) { out.innerHTML = notFoundHtml(text); return; }
+        out.innerHTML = '<div class="tiny muted" style="margin-bottom:6px">' +
+          'Open Food Facts の検索結果（利用者投稿型のデータベースです。' +
+          'パッケージの表示と違う場合は次の画面で修正できます）</div>' +
+          list.map(function (p, i) {
+            var n = p.per100 || {};
+            return '<button class="res" data-wi="' + i + '"><b>' +
+              A().esc(p.name || '(商品名なし)') + '</b><span>' +
+              (p.brand ? A().esc(p.brand) + ' ・ ' : '') +
+              (n.kcal != null ? '100gあたり ' + Math.round(n.kcal) + ' kcal' : '栄養値なし') +
+              (p.quantity ? ' ・ ' + A().esc(p.quantity) : '') + '</span></button>';
+          }).join('');
+        out._list = list;
+      });
+    }
+
+    function notFoundHtml(text) {
+      return '<div class="card"><b>見つかりませんでした</b>' +
+        '<div class="small muted" style="margin-top:8px">' +
+        '公開データベースには日本の外食チェーンや一部の市販品がまだ十分に登録されていません。' +
+        '以下のいずれかで登録できます。</div>' +
+        '<div class="small" style="margin-top:10px">' +
+        '・パッケージや店頭の栄養成分表示を見て「手入力で登録」<br>' +
+        '・チェーンが公開している栄養成分をCSVにして、設定タブの「食品データをCSVで取り込む」から一括登録' +
+        '</div></div>' +
+        '<button class="btn wide" id="wmanual">「' + A().esc(text) + '」を手入力で登録</button>';
+    }
+
+    body.querySelector('#wgo').addEventListener('click', run);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); run(); }
+    });
+    out.addEventListener('click', function (e) {
+      if (e.target.closest('#wmanual')) {
+        openManual(state, slot, { name: input.value.trim(), basis: 'serving' });
+        return;
+      }
+      var b = e.target.closest('[data-wi]');
+      if (!b || !out._list) return;
+      var p = out._list[+b.getAttribute('data-wi')];
+      if (!p) return;
+      var n = p.per100 || {};
+      openManual(state, slot, {
+        name: p.name || input.value.trim(), brand: p.brand, barcode: p.code || '',
+        basis: '100g', kcal: n.kcal, protein: n.protein, fat: n.fat,
+        carb: n.carb, salt: n.salt, fiber: n.fiber, satfat: n.satfat
+      });
+    });
+
+    if (query) run();
+    else setTimeout(function () { input.focus(); }, 60);
   }
 
   /* Web検索で見つからなかったとき: 既存のマイ食品に紐づけるか、新規に手入力する */

@@ -263,6 +263,35 @@
       .catch(function () { return null; });
   }
 
+  /* ---- 商品名でのWeb検索(Open Food Facts) ---- */
+  function searchByName(query, opts) {
+    opts = opts || {};
+    var q = String(query || '').trim();
+    if (!q) return Promise.resolve([]);
+    var url = 'https://world.openfoodfacts.org/cgi/search.pl' +
+      '?search_terms=' + encodeURIComponent(q) +
+      '&search_simple=1&action=process&json=1&page_size=' + (opts.limit || 24) +
+      '&fields=' + OFF_FIELDS;
+    return fetch(url, { headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var list = (j && j.products) || [];
+        return list.map(function (p) { return normalizeOff(p, p.code || ''); })
+          .filter(function (p) { return p.name || p.hasNutrition; })
+          .sort(function (a, b) {
+            // 栄養値があるものと、日本語名のものを上に
+            var sa = (a.hasNutrition ? 2 : 0) + (hasJa(a.name) ? 1 : 0);
+            var sb = (b.hasNutrition ? 2 : 0) + (hasJa(b.name) ? 1 : 0);
+            return sb - sa;
+          });
+      })
+      .catch(function () { return []; });
+  }
+
+  function hasJa(s) {
+    return /[ぁ-んァ-ヶ一-龠]/.test(String(s || ''));
+  }
+
   function num(v) {
     var n = parseFloat(v);
     return isFinite(n) ? n : null;
@@ -302,5 +331,8 @@
     };
   }
 
-  global.Barcode = { scan: scan, lookup: lookup, cancel: function () { finish(null); } };
+  global.Barcode = {
+    scan: scan, lookup: lookup, searchByName: searchByName,
+    cancel: function () { finish(null); }
+  };
 })(window);

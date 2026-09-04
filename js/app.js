@@ -7,6 +7,7 @@
 
   var state = {
     date: S.ymd(new Date()),
+    today: S.ymd(new Date()),
     tab: 'meal',
     settings: null,
     weightCache: null
@@ -88,7 +89,12 @@
   /* ---------- 描画 ---------- */
   var rendering = false, pending = false;
   function render() {
-    var view = document.getElementById('view');
+    // 各画面は #view に click リスナーを付けるので、描画のたびに要素ごと差し替えて
+    // リスナーが積み上がらないようにする
+    var old = document.getElementById('view');
+    var view = old.cloneNode(false);
+    old.parentNode.replaceChild(view, old);
+
     var v = Views[state.tab];
     document.getElementById('dateLabel').textContent = dateLabel(state.date);
     if (!v) { view.innerHTML = '<div class="card">画面が見つかりません</div>'; return; }
@@ -148,13 +154,14 @@
       if (e.target.dataset && e.target.dataset.close) closeSheet();
     });
 
-    // 端末を放置して日付が変わったときに追従する
+    // 日付をまたいで開きっぱなしだった場合だけ「今日」に追従する。
+    // 過去の記録を見ている最中に勝手に today へ飛ばさないこと。
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState !== 'visible') return;
       var today = S.ymd(new Date());
-      if (state.tab === 'meal' && state.date < today && !sheetOpen()) {
-        // 過去日を開いたままにはしない(今日に戻す)
-        state.date = today;
+      if (today !== state.today) {
+        if (state.date === state.today && !sheetOpen()) state.date = today;
+        state.today = today;
       }
       render();
     });
