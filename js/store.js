@@ -110,8 +110,53 @@
     return ymd(d);
   }
 
+  /* 「その食事は食べなかった」を表す印。記録が無いのか、意図して食べなかったのかを
+     区別するために、栄養値を持たない特別なエントリとして置く。
+     栄養素の集計・採点では必ず除外すること。 */
+  function isSkip(e) { return !!(e && e.ref && e.ref.type === 'skipped'); }
+  function notSkip(e) { return !isSkip(e); }
+
+  /* 「よく使う」と「履歴」は全記録を舐める。1.8万件の getAll に約750msかかり、
+     検索のたびに読み直すと重いので、書き込みがあるまで使い回す。 */
+  var allCache = null;
+  function invalidate() { allCache = null; }
+
+  function allEntries() {
+    if (allCache) return Promise.resolve(allCache);
+    return run('entries', 'readonly', function (s) {
+      return reqp(s.getAll());
+    }).then(function (rows) {
+      allCache = rows || [];
+      return allCache;
+    });
+  }
+
   /* ---------------- 食事エントリ ---------------- */
   var Entries = {
+    /* その食事を「食べなかった」にする / 取り消す */
+    setSkipped: function (date, slot, on) {
+      return Entries.byDate(date).then(function (rows) {
+        var marks = rows.filter(function (e) { return isSkip(e) && e.slot === slot; });
+        if (!on) {
+          return Promise.all(marks.map(function (m) { return Entries.remove(m.id); }));
+        }
+        if (marks.length) return null;
+        // 食べなかったのだから、その食事の記録は残さない
+        var others = rows.filter(function (e) { return e.slot === slot && !isSkip(e); });
+        return Promise.all(others.map(function (o) { return Entries.remove(o.id); }))
+          .then(function () {
+            return Entries.put({
+              date: date, slot: slot, name: '食べなかった',
+              amount: 0, unit: '', nutrients: {}, ref: { type: 'skipped' }
+            });
+          });
+      });
+    },
+
+    isSkipped: function (rows, slot) {
+      return (rows || []).some(function (e) { return isSkip(e) && e.slot === slot; });
+    },
+
     byDate: function (date) {
       return run('entries', 'readonly', function (s) {
         return reqp(s.index('date').getAll(IDBKeyRange.only(date)));
@@ -127,18 +172,19 @@
     put: function (rec) {
       if (!rec.id) rec.id = uid();
       if (rec.seq == null) rec.seq = Date.now();
+      invalidate();
       return run('entries', 'readwrite', function (s) {
         return reqp(s.put(rec));
       }).then(function () { return rec; });
     },
     remove: function (id) {
+      invalidate();
       return run('entries', 'readwrite', function (s) { return reqp(s.delete(id)); });
     },
     recent: function (limit, opts) {
       opts = opts || {};
-      return run('entries', 'readonly', function (s) {
-        return reqp(s.getAll());
-      }).then(function (rows) {
+      return allEntries().then(function (rows0) {
+        var rows = rows0.filter(notSkip);   // 「食べなかった」印は食品ではない
         if (opts.slot) {
           rows = rows.filter(function (r) { return r.slot === opts.slot; });
         }
@@ -158,10 +204,8 @@
        同じ食品名でまとめ、最後に食べた日と代表的な分量を添える。 */
     topUsed: function (limit, opts) {
       opts = opts || {};
-      return run('entries', 'readonly', function (s) {
-        return reqp(s.getAll());
-      }).then(function (rows) {
-        rows = rows || [];
+      return allEntries().then(function (rows0) {
+        var rows = rows0.filter(notSkip);   // 「食べなかった」印は食品ではない
         if (opts.slot) rows = rows.filter(function (r) { return r.slot === opts.slot; });
         if (opts.since) rows = rows.filter(function (r) { return r.date >= opts.since; });
         var map = {};
@@ -285,7 +329,8 @@
   function isImported(e) { return !!(e.ref && e.ref.type === 'asken'); }
 
   function dayTotals(date, entries) {
-    entries = entries || [];
+    // 「食べなかった」印は栄養値を持たないので、集計の判定から外す
+    entries = (entries || []).filter(notSkip);
     var F = global.Foods;
     var sumAll = F.sum(entries.map(function (e) { return e.nutrients; }));
     var fromImport = entries.filter(isImported);
@@ -388,7 +433,8 @@
     toiletTypes: ['小', '大'],
     lastTab: 'meal',
     lastAddSrc: 'used',       // 追加シートで最後に見ていた区分
-    lastHistSlot: ''          // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)
+    lastHistSlot: '',         // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)
+    skipBackfilled: 0         // 取り込み済みの日の未記録を「食べなかった」で埋めた版
   };
 
   var Settings = {
@@ -411,6 +457,46 @@
     }
   };
 
+  /* 取り込み済み(あすけん等の日次集計がある)の日で、食事の記録が1件も無い区分を
+     「食べなかった」で埋める。あすけん側で入力が無い＝食べなかった、という前提。
+     一度だけ走らせる。今日と未来の日には触らない。 */
+  var SLOT_KEYS = ['breakfast', 'lunch', 'dinner', 'snack'];
+
+  function backfillSkipped() {
+    var today = ymd(new Date());
+    return Promise.all([Daily.all(), Settings.get()]).then(function (r) {
+      var days = r[0].filter(function (d) { return d.date < today; });
+      if (!days.length) return { added: 0, days: 0 };
+      var want = {};
+      days.forEach(function (d) { want[d.date] = 1; });
+      return run('entries', 'readonly', function (s2) {
+        return reqp(s2.getAll());
+      }).then(function (rows) {
+        var have = {};
+        (rows || []).forEach(function (e) {
+          if (!want[e.date]) return;
+          have[e.date + '|' + e.slot] = 1;
+        });
+        var add = [];
+        Object.keys(want).forEach(function (d) {
+          SLOT_KEYS.forEach(function (sl) {
+            if (have[d + '|' + sl]) return;
+            add.push({
+              id: uid(), seq: Date.now(), date: d, slot: sl, name: '食べなかった',
+              amount: 0, unit: '', nutrients: {}, ref: { type: 'skipped' }
+            });
+          });
+        });
+        if (!add.length) return { added: 0, days: days.length };
+        invalidate();
+        return run('entries', 'readwrite', function (s3) {
+          add.forEach(function (rec) { s3.put(rec); });
+          return true;
+        }).then(function () { return { added: add.length, days: days.length }; });
+      });
+    });
+  }
+
   /* ---------------- 全データ書き出し/取り込み ---------------- */
   function exportAll() {
     return Promise.all([
@@ -432,6 +518,7 @@
 
   function importAll(data, mode) {
     if (!data || data.app !== 'meallog') return Promise.reject(new Error('形式が違います'));
+    invalidate();
     var replace = (mode === 'replace');
     return run(['entries', 'body', 'exercise', 'myfoods', 'settings', 'daily', 'combos'],
       'readwrite', function (st) {
@@ -449,6 +536,7 @@
   }
 
   function wipeAll() {
+    invalidate();
     return run(['entries', 'body', 'exercise', 'myfoods', 'daily', 'combos'], 'readwrite', function (st) {
       st.forEach(function (s) { s.clear(); });
       return true;
@@ -459,6 +547,7 @@
     uid: uid, ymd: ymd, parseYmd: parseYmd, shiftYmd: shiftYmd,
     Entries: Entries, Body: Body, Exercise: Exercise, MyFoods: MyFoods,
     Settings: Settings, Daily: Daily, Combos: Combos, dayTotals: dayTotals,
+    isSkip: isSkip, notSkip: notSkip, backfillSkipped: backfillSkipped,
     exportAll: exportAll, importAll: importAll, wipeAll: wipeAll,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };

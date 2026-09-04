@@ -96,6 +96,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 /* 履歴の絞り込み(朝食/昼食/夕食/間食) */
 .chips-row{display:flex;flex-wrap:wrap;margin-bottom:2px}
 .chips-row[hidden]{display:none}
+
+/* 採点タブ: 期間中の日ごとの点数 */
+.daybars{display:flex;align-items:flex-end;gap:2px;height:96px;margin-top:4px}
+.daybar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.daybar > i{display:block;width:100%;border-radius:2px 2px 0 0;min-height:2px}
+.daybar > span{font-size:8px;margin-top:2px}
 .chips-row .chip{cursor:pointer}
 
 /* ---- 食事スロット ---- */

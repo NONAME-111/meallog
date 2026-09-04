@@ -6,11 +6,50 @@
 
   function A() { return global.App; }
 
+  /* 採点する期間。1日=その日だけ、7/30日=その日までの平均。 */
+  var PERIODS = [
+    { key: 1, label: '当日' },
+    { key: 7, label: '過去7日' },
+    { key: 30, label: '過去30日' }
+  ];
+  var period = 1;
+
   function render(view, state) {
-    return S.Entries.byDate(state.date).then(function (entries) {
-      return Promise.all([entries, A().targetsFor(state.date), S.dayTotals(state.date, entries)]);
+    return (period === 1 ? renderDay(view, state) : renderRange(view, state, period))
+      .then(function () { bindSeg(view, state); });
+  }
+
+  function segHtml() {
+    return '<div class="seg" id="periodSeg">' + PERIODS.map(function (p) {
+      return '<button' + (p.key === period ? ' class="on"' : '') +
+        ' data-p="' + p.key + '">' + p.label + '</button>';
+    }).join('') + '</div>';
+  }
+
+  function bindSeg(view, state) {
+    var seg = view.querySelector('#periodSeg');
+    if (seg) {
+      seg.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-p]');
+        if (!b) return;
+        period = parseInt(b.dataset.p, 10);
+        A().render();
+      });
+    }
+    view.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-rich]');
+      if (b) showRichFoods(b.getAttribute('data-rich'));
+    });
+    void state;
+  }
+
+  /* ---------------- 当日 ---------------- */
+  function renderDay(view, state) {
+    return S.Entries.byDate(state.date).then(function (all) {
+      var entries = all.filter(S.notSkip);
+      return Promise.all([all, entries, A().targetsFor(state.date), S.dayTotals(state.date, all)]);
     }).then(function (r) {
-      var entries = r[0], tg = r[1].tg, dt = r[2];
+      var all = r[0], entries = r[1], tg = r[2].tg, dt = r[3];
       var totals = dt.totals;
       totals.sugar = totals.sugar || F.sugarOf(totals) || 0;
       var sc = N.score(totals, tg);
@@ -22,24 +61,95 @@
       entries.forEach(function (e) {
         slots[e.slot] = (slots[e.slot] || 0) + ((e.nutrients && e.nutrients.kcal) || 0);
       });
-      var missing = ['breakfast', 'lunch', 'dinner'].filter(function (k) { return !slots[k]; });
+      // 「食べなかった」と記録した食事は、未記録として数えない
+      var missing = ['breakfast', 'lunch', 'dinner'].filter(function (k) {
+        return !slots[k] && !S.Entries.isSkipped(all, k);
+      });
 
       view.innerHTML =
-        scoreCard(sc, hasEntries, missing) +
+        segHtml() +
+        scoreCard(sc, hasEntries, missing, '') +
         importedCard(dt.imported) +
         commentCard(cmts) +
         detailCard(sc) +
         allNutrientsCard(totals, tg);
+    });
+  }
 
-      view.addEventListener('click', function (ev) {
-        var b = ev.target.closest('[data-rich]');
-        if (b) showRichFoods(b.getAttribute('data-rich'));
+  /* ---------------- 過去7日 / 過去30日 ---------------- */
+  function renderRange(view, state, days) {
+    var to = state.date;
+    var from = S.shiftYmd(to, -(days - 1));
+    var list = [];
+    for (var d = from; d <= to; d = S.shiftYmd(d, 1)) list.push(d);
+
+    return Promise.all([
+      S.Entries.range(from, to),
+      A().targetsFor(to)
+    ]).then(function (r) {
+      var rows = r[0], tg = r[1].tg;
+      var byDay = {};
+      rows.forEach(function (e) { (byDay[e.date] = byDay[e.date] || []).push(e); });
+
+      // 日ごとの合計を出す(取り込み済みの日次集計も dayTotals が面倒を見る)
+      return Promise.all(list.map(function (d) {
+        return S.dayTotals(d, byDay[d] || []).then(function (dt) {
+          var real = (byDay[d] || []).filter(S.notSkip);
+          return { date: d, totals: dt.totals, tracked: real.length > 0 || (byDay[d] || []).length > 0 };
+        });
+      })).then(function (daysData) {
+        var tracked = daysData.filter(function (x) { return x.tracked; });
+        if (!tracked.length) {
+          view.innerHTML = segHtml() +
+            '<div class="card"><div class="empty">この期間に記録がありません</div></div>';
+          return;
+        }
+        // 記録した日だけで平均する(記録していない日を0として引きずらないため)
+        var avg = {};
+        tracked.forEach(function (x) {
+          for (var k in x.totals) {
+            if (typeof x.totals[k] === 'number') avg[k] = (avg[k] || 0) + x.totals[k];
+          }
+        });
+        for (var k2 in avg) avg[k2] = F.round(avg[k2] / tracked.length, 2);
+        avg.sugar = avg.sugar || F.sugarOf(avg) || 0;
+
+        var sc = N.score(avg, tg);
+        var cmts = N.comments(sc, tg, { hasEntries: true });
+        var note = days + '日のうち ' + tracked.length + ' 日分の平均です' +
+          (tracked.length < days ? '（記録のない ' + (days - tracked.length) + ' 日は除いています）' : '');
+
+        view.innerHTML =
+          segHtml() +
+          scoreCard(sc, true, [], note) +
+          dailyScoreCard(daysData, tg) +
+          commentCard(cmts) +
+          detailCard(sc) +
+          allNutrientsCard(avg, tg);
       });
     });
   }
 
+  /* 期間中の日ごとの点数 */
+  function dailyScoreCard(daysData, tg) {
+    var h = '<div class="card"><h3>日ごとの点数</h3><div class="daybars">';
+    daysData.forEach(function (x) {
+      if (!x.tracked) {
+        h += '<div class="daybar"><i style="height:0"></i><span class="tiny muted">—</span></div>';
+        return;
+      }
+      var t = N.score(x.totals, tg).total;
+      var col = t >= 80 ? 'var(--green)' : (t >= 60 ? 'var(--orange)' : 'var(--red)');
+      h += '<div class="daybar" title="' + A().esc(x.date) + ' ' + t + '点">' +
+        '<i style="height:' + Math.max(2, t) + '%;background:' + col + '"></i>' +
+        '<span class="tiny muted">' + (+x.date.slice(8, 10)) + '</span></div>';
+    });
+    return h + '</div><div class="tiny muted" style="margin-top:6px">' +
+      '棒の高さがその日の点数、下の数字は日付です。「—」は記録のない日です。</div></div>';
+  }
+
   /* ---- 点数 ---- */
-  function scoreCard(sc, hasEntries, missing) {
+  function scoreCard(sc, hasEntries, missing, note) {
     var t = sc.total;
     var color = t >= 80 ? 'var(--green)' : (t >= 60 ? 'var(--orange)' : 'var(--red)');
     var label = !hasEntries ? '未記録'
@@ -50,9 +160,11 @@
       '<div><div class="score-num" style="color:' + color + '">' + t +
       '<small> / 100点</small></div>' +
       '<div class="small muted">' + label + '</div></div></div>' +
+      (note ? '<div class="tiny muted">' + A().esc(note) + '</div>' : '') +
       (missing.length && hasEntries
         ? '<div class="tiny muted">' + missing.map(jpSlot).join('・') +
-          'が未記録です。すべて記録すると採点の精度が上がります。</div>'
+          'が未記録です。食べなかった場合は記録タブで「食べなかった」を押しておくと、' +
+          '採点の精度が上がります。</div>'
         : '') +
       '</div>';
   }

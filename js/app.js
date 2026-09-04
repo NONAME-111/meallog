@@ -206,6 +206,20 @@
         toast('食品データベースの読み込みに失敗しました');
         void e;
       });
+      // かな検索用の読み表と、商品ごとの栄養マスタ(どちらも無くても動く)
+      global.Foods.loadYomi();
+      global.Foods.loadProducts();
+      // 取り込んだ過去日の未記録を「食べなかった」で一度だけ埋める
+      if (!st.skipBackfilled) {
+        S.backfillSkipped().then(function (res) {
+          return S.Settings.save({ skipBackfilled: 1 }).then(function () { return res; });
+        }).then(function (res) {
+          if (res && res.added) {
+            toast('過去 ' + res.days + ' 日分の未記録を「食べなかった」にしました', 3200);
+            reloadSettings().then(render);
+          }
+        }).catch(function (e) { void e; });
+      }
     });
 
     // localhost は開発用なのでキャッシュを挟まない(公開URLでのみPWA化する)

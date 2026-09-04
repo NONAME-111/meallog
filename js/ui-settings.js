@@ -111,6 +111,12 @@
       '食塩相当量, 食物繊維, 飽和脂肪酸, ブランド, バーコード）を入れてください。名前とエネルギーだけでも可。</div>' +
       '<button class="btn line wide" id="btnCsv">食品データをCSVで取り込む</button>' +
       '<input type="file" id="fileCsv" accept=".csv,text/csv" hidden>' +
+      '<hr class="sep">' +
+      '<div class="small muted" style="margin-bottom:8px">あすけんから取り込んだ記録は' +
+      'カロリーしか持っていません。商品ごとの栄養データベースと突き合わせて、' +
+      'たんぱく質・脂質・炭水化物などを後から補えます。' +
+      '（あすけんの日次集計がある過去の日はそのままにします）</div>' +
+      '<button class="btn line wide" id="btnEnrich">記録に栄養素を補う</button>' +
       '<button class="btn sub wide" id="btnWipe" style="margin-top:14px;color:var(--red)">すべての記録を消す</button>' +
       '</div>';
   }
@@ -181,6 +187,7 @@
       if (f) doImport(f);
     });
     on(view, '#btnCsv', 'click', function () { view.querySelector('#fileCsv').click(); });
+    on(view, '#btnEnrich', 'click', doEnrich);
     on(view, '#fileCsv', 'change', function (e) {
       var f = e.target.files && e.target.files[0];
       e.target.value = '';
@@ -242,6 +249,85 @@
       });
     };
     reader.readAsText(file);
+  }
+
+  /* ---------------- 記録に栄養素を補う ---------------- */
+  function hasPfc(n) {
+    n = n || {};
+    return typeof n.protein === 'number' || typeof n.fat === 'number' ||
+      typeof n.carb === 'number';
+  }
+
+  function doEnrich() {
+    A().toast('突き合わせています…');
+    Promise.all([
+      global.Foods.loadProducts(),
+      S.Entries.range('2000-01-01', '2100-12-31'),
+      S.Daily.all(),
+      S.MyFoods.all()
+    ]).then(function (r) {
+      var imported = {};
+      r[2].forEach(function (d) { imported[d.date] = 1; });
+
+      // あすけんの日次集計がある日は、そちらで補えているので触らない。
+      // PFCが入っていてもビタミン・ミネラルが抜けている記録があるので、
+      // 「マスタに在って記録に無い項目」が1つでもあれば対象にする。
+      function needsFill(e) {
+        var m = global.Foods.productFor(e.name);
+        if (!m || !m.nut || m.u !== (e.unit || 'g')) return false;
+        for (var k in m.nut) {
+          if (typeof m.nut[k] === 'number' && typeof (e.nutrients || {})[k] !== 'number') return true;
+        }
+        return false;
+      }
+      var targets = r[1].filter(function (e) {
+        return S.notSkip(e) && !imported[e.date] && needsFill(e);
+      });
+      var entryJobs = [], filled = 0;
+      targets.forEach(function (e) {
+        var m = global.Foods.productFor(e.name);
+        if (!m || !m.nut || m.u !== (e.unit || 'g')) return;
+        void hasPfc;
+        var amount = e.amount || 1;
+        var nut = {};
+        for (var k in (e.nutrients || {})) nut[k] = e.nutrients[k];
+        for (var k2 in m.nut) {
+          // 記録済みのカロリーは実績なので上書きしない
+          if (typeof m.nut[k2] === 'number' && typeof nut[k2] !== 'number') {
+            nut[k2] = Math.round(m.nut[k2] * amount * 1000) / 1000;
+          }
+        }
+        e.nutrients = nut;
+        filled++;
+        entryJobs.push(S.Entries.put(e));
+      });
+
+      // マイ食品にも入れておくと、次に選んだときから栄養素が付く
+      var myFilled = 0;
+      r[3].forEach(function (m) {
+        var p = global.Foods.productFor(m.name);
+        if (!p || !p.nut) return;
+        var nut2 = {};
+        for (var k3 in (m.nutrients || {})) nut2[k3] = m.nutrients[k3];
+        for (var k4 in p.nut) {
+          if (typeof p.nut[k4] === 'number' && typeof nut2[k4] !== 'number') nut2[k4] = p.nut[k4];
+        }
+        m.nutrients = nut2;
+        myFilled++;
+        entryJobs.push(S.MyFoods.put(m));
+      });
+
+      if (!entryJobs.length) {
+        A().toast('補える記録はありませんでした（対象 ' + targets.length + ' 件）', 3200);
+        return null;
+      }
+      return Promise.all(entryJobs).then(function () {
+        A().toast('記録 ' + filled + ' 件、マイ食品 ' + myFilled + ' 件に栄養素を補いました', 3600);
+        A().render();
+      });
+    }).catch(function (err) {
+      A().toast('失敗しました: ' + ((err && err.message) || err));
+    });
   }
 
   /* ---------------- 食品データのCSV取り込み ---------------- */

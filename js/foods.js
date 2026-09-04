@@ -135,6 +135,7 @@
       var raw = String(query || '').trim();
       if (!raw) return [];
       var q = norm(raw);
+      var kanaQ = isKanaQuery(q);
 
       // 入力に含まれる別名のうち、最も長いキーを採用する(「ゆで卵」を「卵」より優先)
       var key = null;
@@ -153,6 +154,8 @@
 
         if (f._n.indexOf(q) !== -1) {
           sc = (f._head.indexOf(q) === 0) ? 120 : (f._n.indexOf(q) === 0 ? 100 : 70);
+        } else if (kanaQ && kanaContains(f._n, q)) {
+          sc = 55;   // 読み下しで当たったものは、字面が一致したものより下に置く
         }
         if (andTerms.length) {
           var nAnd = 0;
@@ -244,6 +247,100 @@
     return out;
   }
 
+  /* ================= かな検索 =================
+     `norm()` はカタカナ→ひらがなしかしないので、「げんえん」で「減塩」は引けない。
+     漢字1字ごとの読み表(data/kanji-yomi.json)を使い、
+     「クエリのかなが、対象の文字列を読み下した中に現れるか」を調べる。 */
+  var YOMI = null, yomiLoading = null;
+
+  function loadYomi() {
+    if (YOMI) return Promise.resolve(YOMI);
+    if (yomiLoading) return yomiLoading;
+    yomiLoading = fetch('data/kanji-yomi.json')
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (j) { YOMI = j || {}; return YOMI; })
+      .catch(function () { YOMI = {}; return YOMI; });
+    return yomiLoading;
+  }
+
+  function isKanji(ch) {
+    var c = ch.charCodeAt(0);
+    return (c >= 0x4e00 && c <= 0x9fff) || c === 0x3005;
+  }
+
+  /* target の ti 文字目から、クエリ q の qi 文字目以降を読み下せるか。
+     memo は "ti,qi" の重複探索を防ぐためのもの(組合せ爆発の抑止)。 */
+  function matchFrom(t, ti, q, qi, memo) {
+    if (qi >= q.length) return true;
+    if (ti >= t.length) return false;
+    var key = ti + ',' + qi;
+    if (memo[key] !== undefined) return memo[key];
+    memo[key] = false;
+    var ch = t.charAt(ti);
+    var out = false;
+    if (isKanji(ch)) {
+      var rs = YOMI[ch];
+      if (rs) {
+        for (var i = 0; i < rs.length && !out; i++) {
+          var r = rs[i];
+          var rest = q.length - qi;
+          if (r.length >= rest) {
+            // クエリの残りが読みの途中で終わる(前方一致)
+            if (r.indexOf(q.substr(qi)) === 0) out = true;
+          } else if (q.substr(qi, r.length) === r) {
+            out = matchFrom(t, ti + 1, q, qi + r.length, memo);
+          }
+        }
+      }
+    } else if (ch === q.charAt(qi)) {
+      out = matchFrom(t, ti + 1, q, qi + 1, memo);
+    }
+    memo[key] = out;
+    return out;
+  }
+
+  /* 正規化済みの target の中に、かなクエリ q が(漢字を読み下して)現れるか */
+  function kanaContains(target, q) {
+    if (!q || !target) return false;
+    if (target.indexOf(q) !== -1) return true;   // そのまま含むなら読み下し不要
+    if (!YOMI) return false;
+    for (var st = 0; st < target.length; st++) {
+      if (matchFrom(target, st, q, 0, {})) return true;
+    }
+    return false;
+  }
+
+  /* クエリがかな/英数だけのときに限ってかな検索を使う(漢字入りは普通の部分一致でよい) */
+  function isKanaQuery(q) {
+    return !!q && !/[一-龠々]/.test(q);
+  }
+
+  /* ================= 商品ごとの栄養マスタ =================
+     取り込んだ過去データはカロリーしか持たないので、
+     商品名から栄養素を引けるようにしておく(1単位あたりの値)。 */
+  var PROD = null, prodLoading = null;
+
+  function loadProducts() {
+    if (PROD) return Promise.resolve(PROD);
+    if (prodLoading) return prodLoading;
+    prodLoading = fetch('data/product-nutrients.json')
+      .then(function (r) { return r.ok ? r.json() : { items: [] }; })
+      .then(function (j) {
+        var map = {};
+        (j.items || []).forEach(function (it) { map[norm(it.n)] = it; });
+        PROD = { map: map, count: (j.items || []).length };
+        return PROD;
+      })
+      .catch(function () { PROD = { map: {}, count: 0 }; return PROD; });
+    return prodLoading;
+  }
+
+  /* 商品名から「1単位あたりの栄養素」を引く。無ければ null。 */
+  function productFor(name) {
+    if (!PROD) return null;
+    return PROD.map[norm(name)] || null;
+  }
+
   /* ---- 「食材」(普段の呼び名 + よみ + 1食分の目安) ---- */
   function commonIndex() {
     return loadCommon().then(function (data) {
@@ -267,10 +364,11 @@
     if (!raw) return Promise.resolve([]);
     var q = norm(raw);
     return commonIndex().then(function (data) {
+      var kana = isKanaQuery(q);
       var hits = [];
       data.items.forEach(function (it) {
         var pos = it._n.indexOf(q);
-        if (pos === -1) return;
+        if (pos === -1 && !(kana && kanaContains(it._n, q))) return;
         // 表示名の先頭で一致したものを上に
         var sc = (norm(it.label).indexOf(q) === 0) ? 100
           : (norm(it.yomi || '').indexOf(q) === 0 ? 90 : (pos === 0 ? 70 : 40));
@@ -293,6 +391,9 @@
   global.Foods = {
     load: load, loadCommon: loadCommon, search: search, byId: byId, scale: scale, sum: sum,
     searchCommon: searchCommon, commonById: commonById,
+    loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
+    loadProducts: loadProducts, productFor: productFor,
+    productCount: function () { return PROD ? PROD.count : 0; },
     groupName: groupName, meta: meta, norm: norm, round: round, sugarOf: sugarOf,
     KEYS: NUTRIENT_KEYS, META: NUTRIENT_META,
     ready: function () { return !!DB; },

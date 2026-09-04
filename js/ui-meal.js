@@ -13,6 +13,16 @@
 
   function A() { return global.App; }
 
+  /* パッケージ表示には載らない栄養素。似た食材から按分して補う対象。 */
+  var MICRO = ['chol', 'k', 'ca', 'mg', 'fe', 'zn', 'vita', 'vitd', 'vite',
+    'vitb1', 'vitb2', 'niacin', 'vitb6', 'vitb12', 'folate', 'vitc'];
+
+  /* 名前が検索語に当たるか。かなだけで入力されたときは漢字を読み下して照合する。 */
+  function nameHit(name, q, kana) {
+    var n = F.norm(name);
+    return n.indexOf(q) !== -1 || (kana && F.kanaContains(n, q));
+  }
+
   /* ---------------- 一覧描画 ---------------- */
   function render(view, state) {
     return S.Entries.byDate(state.date).then(function (entries) {
@@ -30,9 +40,10 @@
 
       // カロリーしか持たない食品が混ざっていて、日次集計の補完も無い日は
       // PFCが0のままになるので、その理由を出す
-      var noPfc = entries.filter(function (e) { return !hasPfc(e.nutrients); }).length;
+      var real = entries.filter(S.notSkip);
+      var noPfc = real.filter(function (e) { return !hasPfc(e.nutrients); }).length;
       var html = summaryHtml(totals, tg, burned,
-        (!dt.imported && noPfc) ? noPfc : 0, entries.length);
+        (!dt.imported && noPfc) ? noPfc : 0, real.length);
       SLOTS.forEach(function (sl) {
         html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }));
       });
@@ -88,11 +99,20 @@
       '<span>' + label + '</span></div>';
   }
 
-  function slotHtml(sl, items) {
+  function slotHtml(sl, allItems) {
+    var skipped = allItems.some(S.isSkip);
+    var items = allItems.filter(S.notSkip);
     var kcal = items.reduce(function (a, e) { return a + ((e.nutrients && e.nutrients.kcal) || 0); }, 0);
     var h = '<div class="card" data-slot="' + sl.key + '">' +
       '<div class="slot-head"><span class="slot-name">' + sl.icon + ' ' + sl.name + '</span>' +
-      '<span class="slot-kcal">' + Math.round(kcal) + ' kcal</span></div>';
+      '<span class="slot-kcal">' + (skipped ? '食べなかった' : Math.round(kcal) + ' kcal') +
+      '</span></div>';
+    if (skipped) {
+      h += '<div class="empty">この食事は食べませんでした</div>' +
+        '<div class="add-row"><button class="btn sub sm" data-unskip="' + sl.key +
+        '">記録できるように戻す</button></div></div>';
+      return h;
+    }
     if (!items.length) {
       h += '<div class="empty">記録がありません</div>';
     } else {
@@ -110,7 +130,11 @@
     h += '<div class="add-row">' +
       '<button class="btn sub sm" data-add="' + sl.key + '">＋ 食品を追加</button>' +
       '<button class="btn sub sm" data-scan="' + sl.key + '">📷 バーコード</button>' +
-      '</div></div>';
+      '</div>' +
+      (items.length ? '' :
+        '<div class="add-row"><button class="btn sub sm" data-skip="' + sl.key +
+        '">🚫 食べなかった</button></div>') +
+      '</div>';
     return h;
   }
 
@@ -137,8 +161,20 @@
   /* ---------------- イベント ---------------- */
   function bind(view, state) {
     view.addEventListener('click', function (ev) {
-      var t = ev.target.closest('[data-add],[data-scan],[data-entry],[data-addex],[data-ex]');
+      var t = ev.target.closest(
+        '[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip]');
       if (!t) return;
+      if (t.dataset.skip) {
+        return S.Entries.setSkipped(state.date, t.dataset.skip, true).then(function () {
+          A().toast(slotName(t.dataset.skip) + 'を「食べなかった」にしました');
+          A().render();
+        });
+      }
+      if (t.dataset.unskip) {
+        return S.Entries.setSkipped(state.date, t.dataset.unskip, false).then(function () {
+          A().render();
+        });
+      }
       if (t.dataset.add) return openAdd(state, t.dataset.add);
       if (t.dataset.scan) return scanFlow(state, t.dataset.scan);
       if (t.dataset.entry) return openEntry(state, t.dataset.entry);
@@ -193,6 +229,22 @@
     var results = body.querySelector('#results');
     var slotFilter = body.querySelector('#slotFilter');
 
+    /* 1文字打つたびに18,000件超の記録をIndexedDBから読み直すと重いので、
+       このシートを開いているあいだは結果を使い回す。
+       記録を足したあとは openAdd 自体が作り直されるため、自然に新しくなる。 */
+    var memo = {};
+    function once(k, fn) {
+      if (!memo[k]) memo[k] = fn();
+      return memo[k];
+    }
+    function usedList() { return once('used', function () { return S.Entries.topUsed(400); }); }
+    function histList() {
+      return once('hist:' + histSlot, function () {
+        return S.Entries.recent(400, { slot: histSlot || null });
+      });
+    }
+    function comboList() { return once('combos', function () { return S.Combos.all(); }); }
+
     // 数量入力などから戻ってきたときに、同じ場所を開き直すための関数
     function restorer() {
       openAdd(state, slot, { src: src, query: q.value, histSlot: histSlot });
@@ -216,7 +268,8 @@
     /* ---- 区分ごとの一覧(検索欄が空のとき) ---- */
     function browse() {
       if (src === 'used') {
-        S.Entries.topUsed(60).then(function (list) {
+        usedList().then(function (all) {
+          var list = all.slice(0, 60);
           if (!list.length) {
             results.innerHTML = '<div class="empty">まだ記録がありません。<br>' +
               '食べたものを記録していくと、ここによく食べる順で並びます。</div>';
@@ -229,7 +282,7 @@
         return;
       }
       if (src === 'combo') {
-        S.Combos.all().then(function (list) {
+        comboList().then(function (list) {
           var head = '<button class="btn line wide" id="newCombo" style="margin-bottom:10px">' +
             '＋ 新しいセットを作る</button>' +
             '<div class="tiny muted" style="margin-bottom:8px">' +
@@ -242,7 +295,8 @@
         });
         return;
       }
-      S.Entries.recent(80, { slot: histSlot || null }).then(function (list) {
+      histList().then(function (all2) {
+        var list = all2.slice(0, 80);
         results.innerHTML = list.length
           ? list.map(function (x) { return resRow(x, 'hist'); }).join('')
           : '<div class="empty">' + (histSlot ? slotName(histSlot) + 'の' : '') +
@@ -253,21 +307,22 @@
     /* ---- 横断検索(検索欄に文字があるとき) ---- */
     function searchAll(text) {
       var n = F.norm(text);
+      var kana = F.isKanaQuery(n);
       return Promise.all([
         F.searchCommon(text, { limit: 24 }),
-        S.Entries.topUsed(400),
-        S.Entries.recent(400, { slot: histSlot || null }),
-        S.Combos.all(),
+        usedList(),
+        histList(),
+        comboList(),
         F.search(text, { limit: 24 })
       ]).then(function (r) {
         var commons = r[0];
-        var used = r[1].filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; }).slice(0, 12);
+        var used = r[1].filter(function (x) { return nameHit(x.name, n, kana); }).slice(0, 12);
         var usedNames = {};
         used.forEach(function (x) { usedNames[x.name] = 1; });
         var hist = r[2].filter(function (x) {
-          return F.norm(x.name).indexOf(n) !== -1 && !usedNames[x.name];
+          return nameHit(x.name, n, kana) && !usedNames[x.name];
         }).slice(0, 20);
-        var combos = r[3].filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; });
+        var combos = r[3].filter(function (x) { return nameHit(x.name, n, kana); });
         // 友好名で出したものと同じ食品番号は、生の成分表側からは省く
         var shown = {};
         commons.forEach(function (c) { shown[c.id] = 1; });
@@ -586,7 +641,8 @@
         F.search(text, { limit: 20 })
       ]).then(function (r) {
         var n = F.norm(text);
-        var used = r[1].filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; }).slice(0, 10);
+        var kana = F.isKanaQuery(n);
+        var used = r[1].filter(function (x) { return nameHit(x.name, n, kana); }).slice(0, 10);
         var shown = {};
         r[0].forEach(function (c) { shown[c.id] = 1; });
         var seibun = r[2].filter(function (f) { return !shown[f.id]; }).slice(0, 14);
@@ -647,6 +703,19 @@
     };
   }
   function fromMyFood(m) {
+    // マイ食品も、足りない栄養素があれば商品マスタで補う
+    {
+      var pm = F.productFor(m.name);
+      if (pm && pm.nut) {
+        var merged = {};
+        for (var k in (m.nutrients || {})) merged[k] = m.nutrients[k];
+        for (var k2 in pm.nut) {
+          if (typeof pm.nut[k2] === 'number' && typeof merged[k2] !== 'number') merged[k2] = pm.nut[k2];
+        }
+        m = { name: m.name, basis: m.basis, servingLabel: m.servingLabel,
+          brand: m.brand, id: m.id, nutrients: merged };
+      }
+    }
     return {
       name: m.name, basis: m.basis || '100g', per: m.nutrients,
       unit: m.basis === 'serving' ? (m.servingLabel || '食') : 'g',
@@ -661,6 +730,15 @@
     var factor = (e.unit === 'g') ? (100 / amount) : (1 / amount);
     for (var k in (e.nutrients || {})) {
       if (typeof e.nutrients[k] === 'number') per[k] = e.nutrients[k] * factor;
+    }
+    // 商品マスタに載っている食品なら、足りない栄養素を補う。
+    // PFCが入っていてもビタミン・ミネラルは抜けていることが多いので、
+    // 「PFCが無いときだけ」ではなく常に見にいく。記録済みの値は上書きしない。
+    var m = F.productFor(e.name);
+    if (m && m.nut && m.u === (e.unit || 'g')) {
+      for (var k2 in m.nut) {
+        if (typeof m.nut[k2] === 'number' && typeof per[k2] !== 'number') per[k2] = m.nut[k2];
+      }
     }
     return {
       name: e.name, basis: (e.unit === 'g') ? '100g' : 'serving', per: per,
@@ -814,6 +892,11 @@
         '<div class="grid2">' + num('mFib', '食物繊維 (g)', preset.fiber) + num('mSat', '飽和脂肪酸 (g)', preset.satfat) + '</div>' +
         '<div class="tiny muted">パッケージの栄養成分表示をそのまま入力してください。空欄は0として扱います。</div>' +
       '</div>' +
+      '<div class="card"><h3>その他の栄養素（任意）</h3>' +
+        '<div class="small muted">パッケージの表示にはビタミン・ミネラルが載っていません。' +
+        '似た食材を1つ選んでおくと、重さに応じて按分して補い、採点に反映されます。</div>' +
+        '<div id="refBox" style="margin-top:10px"></div>' +
+      '</div>' +
       (preset.barcode ? '<div class="card small">バーコード <b>' + A().esc(preset.barcode) +
         '</b><div class="tiny muted">保存すると次回から自動で呼び出せます</div></div>' : '') +
       '<button class="btn wide" id="mSave">保存して記録する</button>';
@@ -821,10 +904,77 @@
     var body = A().openSheet('食品を手入力', html);
     var basis = body.querySelector('#mBasis');
     if (preset.basis) basis.value = preset.basis;
+
+    /* ---- 似た食材からの補完 ---- */
+    var refFood = preset.refFood || null;      // 成分表の1品目(まるごと)
+    var refGrams = preset.refGrams || null;    // 1単位あたりの重さ
+
+    // いま入力されている内容を持ったまま別画面へ行って戻るためのもの
+    function snapshot() {
+      return {
+        name: body.querySelector('#mName').value,
+        brand: body.querySelector('#mBrand').value,
+        basis: basis.value,
+        servingLabel: body.querySelector('#mServ').value,
+        barcode: preset.barcode || '',
+        kcal: body.querySelector('#mKcal').value,
+        protein: body.querySelector('#mP').value, fat: body.querySelector('#mF').value,
+        carb: body.querySelector('#mC').value, salt: body.querySelector('#mSalt').value,
+        fiber: body.querySelector('#mFib').value, satfat: body.querySelector('#mSat').value,
+        refFood: refFood, refGrams: refGrams
+      };
+    }
+
+    function drawRef() {
+      var box = body.querySelector('#refBox');
+      if (!refFood) {
+        box.innerHTML = '<button class="btn line wide" id="mPickRef">似た食材を選ぶ</button>';
+      } else {
+        var isG = basis.value === '100g';
+        box.innerHTML = '<div class="row between" style="align-items:flex-start;gap:8px">' +
+          '<div class="grow"><b class="small">' + A().esc(refFood.n) + '</b>' +
+          '<div class="tiny muted">' + A().esc(F.groupName(refFood.g)) + ' から補います</div></div>' +
+          '<button class="chip" id="mClearRef">やめる</button></div>' +
+          (isG
+            ? '<div class="tiny muted" style="margin-top:8px">100gあたりで入力しているので、' +
+              'そのまま100g分を補います。</div>'
+            : '<label class="fld" style="margin-top:10px"><span>1' +
+              A().esc(body.querySelector('#mServ').value.trim() || '個') +
+              'あたりの重さ (g)</span><input type="number" id="mRefG" inputmode="decimal" ' +
+              'step="1" value="' + (refGrams == null ? '' : refGrams) + '" placeholder="例: 110"></label>');
+      }
+      var pick = box.querySelector('#mPickRef');
+      if (pick) {
+        pick.addEventListener('click', function () {
+          // シートは1枚を描き替えて使い回すので、離れる前に入力内容を控えておく
+          var snap = snapshot();
+          A().pushSheet(function () { openManual(state, slot, snap, existingId); });
+          pickSeibun(function (f) {
+            snap.refFood = f;
+            // 選ぶ前に積んだ戻り先は使わず、選んだ食材を持たせて開き直す
+            // (closeSheet はスタックごと消えるので使わない)
+            A().dropSheet();
+            openManual(state, slot, snap, existingId);
+          });
+        });
+      }
+      var clr = box.querySelector('#mClearRef');
+      if (clr) {
+        clr.addEventListener('click', function () { refFood = null; refGrams = null; drawRef(); });
+      }
+      var rg = box.querySelector('#mRefG');
+      if (rg) {
+        rg.addEventListener('input', function () {
+          var x = parseFloat(rg.value);
+          refGrams = isFinite(x) && x > 0 ? x : null;
+        });
+      }
+    }
+    drawRef();
     function toggleServ() {
       body.querySelector('#servWrap').style.display = (basis.value === 'serving') ? '' : 'none';
     }
-    basis.addEventListener('change', toggleServ);
+    basis.addEventListener('change', function () { toggleServ(); drawRef(); });
     toggleServ();
 
     body.querySelector('#mSave').addEventListener('click', function () {
@@ -835,11 +985,21 @@
         carb: v(body, '#mC'), salt: v(body, '#mSalt'), fiber: v(body, '#mFib'),
         satfat: v(body, '#mSat')
       };
+      // 似た食材が選ばれていれば、重さに応じてビタミン・ミネラルを按分して足す
+      var refG = (basis.value === '100g') ? 100 : refGrams;
+      if (refFood && refG > 0) {
+        MICRO.forEach(function (k) {
+          var v2 = refFood[k];
+          if (typeof v2 !== 'number' || typeof nut[k] === 'number') return;
+          nut[k] = Math.round(v2 * refG / 100 * 1000) / 1000;
+        });
+      }
       var rec = {
         name: name, brand: body.querySelector('#mBrand').value.trim(),
         basis: basis.value, servingLabel: body.querySelector('#mServ').value.trim() || '個',
         barcode: preset.barcode ? String(preset.barcode) : '',
-        nutrients: nut
+        nutrients: nut,
+        refFood: refFood ? refFood.id : '', refGrams: refG || null
       };
       S.MyFoods.put(rec).then(function (saved) {
         A().toast('マイ食品に保存しました');
@@ -864,6 +1024,57 @@
   function v(body, sel) {
     var x = parseFloat(body.querySelector(sel).value);
     return isFinite(x) ? x : 0;
+  }
+
+  /* 成分表から1品目だけ選ぶ(栄養素の補完元にするため。記録はしない) */
+  function pickSeibun(onPick) {
+    var html = '<div class="row" style="margin-bottom:10px">' +
+      '<input type="text" id="sq" placeholder="似ている食材を検索（例: とりむね、じゃがいも）" ' +
+      'autocomplete="off"></div>' +
+      '<div class="tiny muted" style="margin-bottom:8px">ビタミン・ミネラルの補完にだけ使います。' +
+      'カロリーやPFCは手入力した値のままです。</div>' +
+      '<div id="sres"></div>';
+    var body = A().openSheet('似た食材を選ぶ', html);
+    var q = body.querySelector('#sq');
+    var out = body.querySelector('#sres');
+    var cache = {};
+
+    function show() {
+      var text = q.value.trim();
+      if (!text) { out.innerHTML = '<div class="empty">食材名を入れてください</div>'; return; }
+      Promise.all([F.searchCommon(text, { limit: 12 }), F.search(text, { limit: 24 })])
+        .then(function (r) {
+          var ids = {};
+          var rows = [];
+          r[0].forEach(function (c) { ids[c.id] = 1; });
+          return F.load().then(function (db) {
+            var byId = {};
+            db.foods.forEach(function (f) { byId[f.id] = f; });
+            r[0].forEach(function (c) { if (byId[c.id]) rows.push(byId[c.id]); });
+            r[1].forEach(function (f) { if (!ids[f.id]) rows.push(f); });
+            rows.forEach(function (f) { cache[f.id] = f; });
+            out.innerHTML = rows.length
+              ? rows.slice(0, 30).map(function (f) {
+                return '<button class="res" data-sid="' + A().esc(f.id) + '"><b>' +
+                  A().esc(f.n) + '</b><span>' + A().esc(F.groupName(f.g)) +
+                  ' ・ 100gあたり ' + Math.round(f.kcal || 0) + ' kcal</span></button>';
+              }).join('')
+              : '<div class="empty">該当する食材がありません</div>';
+          });
+        });
+    }
+
+    var timer = 0;
+    q.addEventListener('input', function () {
+      clearTimeout(timer); timer = setTimeout(show, 180);
+    });
+    out.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-sid]');
+      if (!b) return;
+      var f = cache[b.dataset.sid];
+      if (f) onPick(f);
+    });
+    setTimeout(function () { q.focus(); }, 60);
   }
 
   /* ---------------- バーコード ---------------- */

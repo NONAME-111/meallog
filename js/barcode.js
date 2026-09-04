@@ -75,10 +75,30 @@
     return n || 'エラー';
   }
 
+  // 使い終わってもすぐには止めず、この時間だけ保持する(そのあいだは再許可を聞かれない)
+  var KEEP_MS = 5 * 60 * 1000;
+  var releaseTimer = 0;
+
+  function live() {
+    return !!(stream && stream.getVideoTracks().some(function (t) {
+      return t.readyState === 'live';
+    }));
+  }
+
   function startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return Promise.reject(new Error('unsupported'));
     }
+    if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = 0; }
+
+    // 前回のストリームが生きていれば、それを使い回す(許可ダイアログを出さないため)
+    if (live()) {
+      stream.getTracks().forEach(function (t) { t.enabled = true; });
+      el.video.srcObject = stream;
+      el.video.setAttribute('playsinline', '');
+      return el.video.play();
+    }
+
     return navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
@@ -90,16 +110,35 @@
     });
   }
 
-  function stopCamera() {
-    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-    if (zxTimer) { clearTimeout(zxTimer); zxTimer = 0; }
-    zxReader = null;
+  // 本当にカメラを手放す(次に開くときは許可を聞かれる)
+  function releaseCamera() {
+    if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = 0; }
     if (stream) {
       stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { void e; } });
       stream = null;
     }
     if (el.video) el.video.srcObject = null;
   }
+
+  function stopCamera() {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    if (zxTimer) { clearTimeout(zxTimer); zxTimer = 0; }
+    zxReader = null;
+    if (el.video) {
+      try { el.video.pause(); } catch (e) { void e; }
+      el.video.srcObject = null;
+    }
+    if (!stream) return;
+    // 映像は止めるが、トラックは生かしたままにして許可を保持する
+    stream.getTracks().forEach(function (t) { t.enabled = false; });
+    if (releaseTimer) clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(releaseCamera, KEEP_MS);
+  }
+
+  // アプリを離れているあいだカメラを掴んだままにしない
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') releaseCamera();
+  });
 
   function finish(code) {
     if (!current || current.done) return;
