@@ -1,20 +1,20 @@
 /* service-worker.js - オフライン動作用のキャッシュ
    リリースごとに CACHE_NAME を上げること (Claude verXX と対応させる) */
-var CACHE_NAME = 'meallog-v6';   /* Claude ver06 */
+var CACHE_NAME = 'meallog-v7';   /* Claude ver07 */
 var ASSETS = [
   './',
   'index.html',
-  'css/style.css?v=20260905-06',
-  'js/store.js?v=20260905-06',
-  'js/foods.js?v=20260905-06',
-  'js/nutrition.js?v=20260905-06',
-  'js/barcode.js?v=20260905-06',
-  'js/ui-meal.js?v=20260905-06',
-  'js/ui-body.js?v=20260905-06',
-  'js/ui-graph.js?v=20260905-06',
-  'js/ui-advice.js?v=20260905-06',
-  'js/ui-settings.js?v=20260905-06',
-  'js/app.js?v=20260905-06',
+  'css/style.css?v=20260905-07',
+  'js/store.js?v=20260905-07',
+  'js/foods.js?v=20260905-07',
+  'js/nutrition.js?v=20260905-07',
+  'js/barcode.js?v=20260905-07',
+  'js/ui-meal.js?v=20260905-07',
+  'js/ui-body.js?v=20260905-07',
+  'js/ui-graph.js?v=20260905-07',
+  'js/ui-advice.js?v=20260905-07',
+  'js/ui-settings.js?v=20260905-07',
+  'js/app.js?v=20260905-07',
   'vendor/zxing.min.js',
   'data/foods.json',
   'data/common.json',
