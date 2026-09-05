@@ -186,8 +186,8 @@
     void pad; void w;
   }
 
-  function grid(w, h) {
-    var pad = { l: 36, r: 10, t: 10, b: 20 };
+  function grid(w, h, right) {
+    var pad = { l: 36, r: right || 10, t: 10, b: 20 };
     return { x0: pad.l, y0: pad.t, wid: w - pad.l - pad.r, hgt: h - pad.t - pad.b, pad: pad };
   }
 
@@ -201,6 +201,8 @@
     }).filter(Boolean);
 
     if (!pts.length) { empty(ctx, s); return; }
+    var fpts = pts.filter(function (p) { return typeof p.f === 'number' && isFinite(p.f) && p.f > 0; });
+    if (fpts.length > 1) g = grid(s.w, s.h, 42);
     var vals = pts.map(function (p) { return p.w; });
     if (st.goalWeight) vals.push(st.goalWeight);
     var sc = niceScale(Math.min.apply(null, vals), Math.max.apply(null, vals));
@@ -231,7 +233,6 @@
       ctx.beginPath(); ctx.arc(X(p.i), Y(p.w), 2.6, 0, Math.PI * 2); ctx.fill();
     });
 
-    var fpts = pts.filter(function (p) { return p.f; });
     if (fpts.length > 1) {
       var fvals = fpts.map(function (p) { return p.f; });
       var fsc = niceScale(Math.min.apply(null, fvals), Math.max.apply(null, fvals));
@@ -249,8 +250,21 @@
       ctx.fillStyle = css('--blue', '#3d7fd6');
       ctx.font = '10px -apple-system,sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText('― 体脂肪率(右目盛なし)', g.x0 + 2, g.y0 + 2);
+      ctx.fillText('― 体脂肪率(右目盛)', g.x0 + 2, g.y0 + 2);
+      rightAxisLabels(ctx, g, fsc);
     }
+  }
+
+  function rightAxisLabels(ctx, g, sc) {
+    ctx.save();
+    ctx.fillStyle = css('--blue', '#3d7fd6');
+    ctx.font = '10px -apple-system,sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    for (var v = sc.lo; v <= sc.hi + 1e-9; v += sc.step) {
+      var y = g.y0 + (1 - (v - sc.lo) / (sc.hi - sc.lo)) * g.hgt;
+      ctx.fillText((Math.round(v * 10) / 10).toFixed(1) + '%', g.x0 + g.wid + 4, y);
+    }
+    ctx.restore();
   }
 
   function drawKcal(cv, days, kcalByDay, burnByDay, goal) {

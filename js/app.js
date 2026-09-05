@@ -195,12 +195,15 @@
       render();
     });
 
-    reloadSettings().then(function (st) {
+    S.migrateToilet().then(reloadSettings).then(function (st) {
       state.tab = st.lastTab || 'meal';
       Array.prototype.forEach.call(document.querySelectorAll('#tabbar .tab'), function (b) {
         b.classList.toggle('is-active', b.dataset.tab === state.tab);
       });
       render();
+      global.Steps.receiveUrl().then(function (count) {
+        if (count) { toast(count + '日分の歩数を取り込みました', 3500); render(); }
+      }).catch(function (e) { toast('歩数を取り込めませんでした: ' + e.message, 5000); });
       // 食品DBは先読みしておく
       global.Foods.load().catch(function (e) {
         toast('食品データベースの読み込みに失敗しました');

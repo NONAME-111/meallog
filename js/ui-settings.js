@@ -95,7 +95,7 @@
     return '<div class="card"><h3>トイレ記録のボタン</h3>' +
       '<label class="fld"><span>ボタン名（カンマ区切り）</span>' +
       '<input type="text" id="sToilet" value="' + A().esc((st.toiletTypes || []).join(',')) + '"></label>' +
-      '<div class="tiny muted">例: 小,大 ／ 例: 小,大,軟便</div></div>';
+      '<div class="tiny muted">例: 小 ／ お通じはカラダタブで記録します</div></div>';
   }
 
   function dataCard() {
@@ -123,7 +123,7 @@
 
   function aboutCard() {
     return '<div class="card"><h3>このアプリについて</h3>' +
-      '<div class="small">ミールログ <b>Claude ver01</b></div>' +
+      '<div class="small">ミールログ <b>' + A().esc(document.getElementById('verLabel').textContent) + '</b></div>' +
       '<div class="tiny muted" style="margin-top:6px">' +
       '栄養成分の出典: ' + A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') +
       '（収載 ' + F.count() + ' 品目）<br>' +
@@ -165,8 +165,8 @@
     });
     on(view, '#sToilet', 'change', function (e) {
       var list = e.target.value.split(',').map(function (x) { return x.trim(); })
-        .filter(function (x) { return x; });
-      save({ toiletTypes: list.length ? list : ['小', '大'] });
+        .filter(function (x) { return x && x !== '大'; });
+      save({ toiletTypes: list.length ? list : ['小'] });
     });
 
     view.addEventListener('click', function (ev) {

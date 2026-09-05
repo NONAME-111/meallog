@@ -287,6 +287,19 @@
     put: function (rec) {
       return run('body', 'readwrite', function (s) { return reqp(s.put(rec)); });
     },
+    // 部分更新を同一トランザクションで行い、体重やメモなどを保持する。
+    importSteps: function (rows) {
+      return run('body', 'readwrite', function (s) {
+        return Promise.all(rows.map(function (row) {
+          return reqp(s.get(row.date)).then(function (rec) {
+            rec = rec || { date: row.date, weight: null, bodyFat: null, custom: {},
+              bowel: '', toilet: [], memo: '' };
+            rec.steps = row.steps;
+            return reqp(s.put(rec));
+          });
+        })).then(function () { return rows.length; });
+      });
+    },
     all: function () {
       return run('body', 'readonly', function (s) { return reqp(s.getAll()); })
         .then(function (rows) {
@@ -430,7 +443,8 @@
     customFields: [           // カラダ記録の任意項目
       { id: 'kintore', label: '筋トレ', type: 'count', unit: '回' }
     ],
-    toiletTypes: ['小', '大'],
+    toiletTypes: ['小'],
+    toiletMigrated: 0,
     lastTab: 'meal',
     lastAddSrc: 'used',       // 追加シートで最後に見ていた区分
     lastHistSlot: '',         // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)
@@ -497,6 +511,15 @@
     });
   }
 
+  // ボタン設定だけを移行する。既存の「大」の記録は削除・変換しない。
+  function migrateToilet() {
+    return Settings.get().then(function (st) {
+      if (st.toiletMigrated) return st;
+      var types = (st.toiletTypes || []).filter(function (x) { return x !== '大'; });
+      return Settings.save({ toiletTypes: types.length ? types : ['小'], toiletMigrated: 1 });
+    });
+  }
+
   /* ---------------- 全データ書き出し/取り込み ---------------- */
   function exportAll() {
     return Promise.all([
@@ -548,7 +571,7 @@
     Entries: Entries, Body: Body, Exercise: Exercise, MyFoods: MyFoods,
     Settings: Settings, Daily: Daily, Combos: Combos, dayTotals: dayTotals,
     isSkip: isSkip, notSkip: notSkip, backfillSkipped: backfillSkipped,
-    exportAll: exportAll, importAll: importAll, wipeAll: wipeAll,
+    exportAll: exportAll, importAll: importAll, wipeAll: wipeAll, migrateToilet: migrateToilet,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

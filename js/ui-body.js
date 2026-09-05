@@ -25,10 +25,9 @@
       view.innerHTML =
         weightCard(rec, st, tg, history) +
         customCard(rec, st) +
-        bowelCard(rec) +
-        toiletCard(rec, st) +
+        '<div class="card elimination-card">' + bowelCard(rec) + toiletCard(rec, st) + '</div>' +
         memoCard(rec);
-      bind(view, state, rec, st);
+      bind(view, state, rec, st, history);
     });
   }
 
@@ -52,6 +51,7 @@
       '</div>' +
       '<label class="fld"><span>歩数</span><input type="number" inputmode="numeric" ' +
         'id="bSteps" value="' + (rec.steps == null ? '' : rec.steps) + '"></label>' +
+      '<button class="btn sub sm" data-stepimport="1" style="margin-bottom:10px">歩数を取り込む</button>' +
       '<div class="small muted">' +
         (bmi ? 'BMI ' + N.fmt(bmi) + '（' + bmiLabel(bmi) + '）' : 'BMIは身長の設定後に表示されます') +
         (diff != null ? ' ／ 前回比 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg' : '') +
@@ -110,28 +110,30 @@
   /* ---- お通じ ---- */
   function bowelCard(rec) {
     var opts = [['yes', 'あり'], ['no', 'なし']];
-    return '<div class="card"><h3>お通じ</h3><div>' +
+    return '<section class="bowel-section"><div class="row between"><h3>お通じ</h3>' +
+      '<button class="calendar-open" data-bowelcalendar="1" aria-label="お通じカレンダーを開く">📅 カレンダー</button></div><div class="bowel-choices">' +
       opts.map(function (o) {
         return '<button class="chip' + (rec.bowel === o[0] ? ' on' : '') +
           '" data-bowel="' + o[0] + '">' + o[1] + '</button>';
       }).join('') +
       (rec.bowel ? '<button class="chip" data-bowel="">記録を消す</button>' : '') +
-      '</div></div>';
+      '</div></section>';
   }
 
   /* ---- トイレ(ワンタップ) ---- */
   function toiletCard(rec, st) {
-    var types = st.toiletTypes && st.toiletTypes.length ? st.toiletTypes : ['小', '大'];
+    var types = (st.toiletTypes || []).filter(function (t) { return t !== '大'; });
+    if (!types.length) types = ['小'];
     var counts = {};
     types.forEach(function (t) { counts[t] = 0; });
     rec.toilet.forEach(function (x) {
       if (counts[x.type] == null) counts[x.type] = 0;
       counts[x.type]++;
     });
-    var h = '<div class="card"><h3>トイレ</h3><div class="tap-grid">';
+    var h = '<section class="toilet-section"><h3>トイレ</h3><div class="toilet-actions">';
     types.forEach(function (t) {
-      h += '<button class="tap-btn" data-toilet="' + A().esc(t) + '">' + A().esc(t) +
-        '<span class="cnt">' + (counts[t] || 0) + '</span></button>';
+      h += '<button class="toilet-add" data-toilet="' + A().esc(t) + '"><span>＋ ' + A().esc(t) + 'を記録</span>' +
+        '<span class="toilet-count">' + (counts[t] || 0) + ' 回</span></button>';
     });
     h += '</div>';
     if (rec.toilet.length) {
@@ -145,7 +147,7 @@
     } else {
       h += '<div class="empty" style="margin-top:6px">ボタンを押すと、その時刻で記録されます</div>';
     }
-    return h + '</div>';
+    return h + '</section>';
   }
 
   function memoCard(rec) {
@@ -155,7 +157,7 @@
   }
 
   /* ---------------- 保存とイベント ---------------- */
-  function bind(view, state, rec, st) {
+  function bind(view, state, rec, st, history) {
     function save(patch, rerender) {
       for (var k in patch) rec[k] = patch[k];
       rec.date = state.date;
@@ -183,9 +185,11 @@
     });
 
     view.addEventListener('click', function (ev) {
-      var t = ev.target.closest('[data-bowel],[data-toilet],[data-delToilet],[data-cf],[data-cstep],[data-editfields]');
+      var t = ev.target.closest('[data-bowel],[data-toilet],[data-delToilet],[data-cf],[data-cstep],[data-editfields],[data-bowelcalendar],[data-stepimport]');
       if (!t) return;
 
+      if (t.hasAttribute('data-bowelcalendar')) return openBowelCalendar(state, history);
+      if (t.hasAttribute('data-stepimport')) return global.Steps.openImport();
       if (t.hasAttribute('data-editfields')) return editFields(state, st);
 
       if (t.hasAttribute('data-bowel')) {
@@ -224,6 +228,43 @@
         save({}, false);
       });
     });
+  }
+
+  function openBowelCalendar(state, history) {
+    // bodyタブ描画時に取得済みの全履歴を再利用。月送りでDBを読み直さない。
+    var yes = {}, recorded = {};
+    history.forEach(function (r) {
+      if (r.bowel === 'yes') yes[r.date] = true;
+      if (r.bowel === 'yes' || r.bowel === 'no') recorded[r.date] = r.bowel;
+    });
+    var base = S.parseYmd(state.date), month = new Date(base.getFullYear(), base.getMonth(), 1);
+    var today = S.ymd(new Date());
+    var body = A().openSheet('お通じカレンダー', '<div id="bowelCalendar"></div>');
+    var host = body.querySelector('#bowelCalendar');
+    function draw() {
+      var year = month.getFullYear(), m = month.getMonth();
+      var count = new Date(year, m + 1, 0).getDate(), cells = '';
+      for (var i = 0; i < month.getDay(); i++) cells += '<span class="cal-blank"></span>';
+      for (var d = 1; d <= count; d++) {
+        var date = S.ymd(new Date(year, m, d)), had = !!yes[date], no = recorded[date] === 'no';
+        cells += '<button class="cal-day' + (date === state.date ? ' selected' : '') +
+          (date === today ? ' today' : '') + (had ? ' has-bowel' : '') +
+          '" data-caldate="' + date + '" aria-label="' + date + ' お通じ' +
+          (had ? 'あり' : no ? 'なし' : '未記録') + '"' +
+          (date === state.date ? ' aria-current="date"' : '') + '><span>' + d +
+          '</span><span class="cal-mark">' + (had ? '✓' : no ? '−' : '') + '</span></button>';
+      }
+      host.innerHTML = '<div class="cal-header"><button class="btn sub sm" data-month="-1" aria-label="前の月">‹</button>' +
+        '<b>' + year + '年 ' + (m + 1) + '月</b><button class="btn sub sm" data-month="1" aria-label="次の月">›</button></div>' +
+        '<div class="cal-grid cal-week">' + ['日','月','火','水','木','金','土'].map(function (day) { return '<span>' + day + '</span>'; }).join('') +
+        '</div><div class="cal-grid">' + cells + '</div><p class="small muted">✓ あり　− なし　空欄 未記録<br>日付を押すと、その日の記録に移動します。</p>';
+    }
+    host.addEventListener('click', function (e) {
+      var nav = e.target.closest('[data-month]'), day = e.target.closest('[data-caldate]');
+      if (nav) { month.setMonth(month.getMonth() + Number(nav.dataset.month)); draw(); }
+      if (day) { A().closeSheet(); A().setDate(day.dataset.caldate); }
+    });
+    draw();
   }
 
   /* ---------------- 任意項目の編集 ---------------- */
