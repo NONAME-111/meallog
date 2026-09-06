@@ -40,7 +40,10 @@
   function openImport(initial) {
     var A = global.App;
     var body = A.openSheet('歩数を取り込む',
-      '<p class="small">ショートカットでコピーした歩数を貼り付けます。同じ日の歩数は最新の合計に置き換わります。</p>' +
+      '<p class="small">Webアプリからヘルスケアを直接読めないため、Appleのショートカットで歩数をコピーして貼り付けます。同じ日の歩数は最新の合計に置き換わります。</p>' +
+      '<ol class="step-guide"><li>iPhoneの「ショートカット」で、対象日のヘルスケア歩数を合計します</li>' +
+      '<li><code>2026-09-05:8432</code> の形でクリップボードへコピーします</li>' +
+      '<li>下の欄へ貼り付けて「取り込む」を押します</li></ol>' +
       '<label class="fld"><span>日付と歩数</span><textarea id="stepsText" rows="5" placeholder="2026-09-05:8432&#10;2026-09-06:7210">' +
       A.esc(initial || '') + '</textarea></label>' +
       '<p class="small muted" id="stepsPreview" aria-live="polite"></p>' +

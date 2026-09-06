@@ -67,10 +67,11 @@
     var over = net > goal;
     var rest = goal - net;
     return '' +
-      '<div class="summary">' +
+      '<button type="button" class="summary summary-link" data-open-score="1" aria-label="採点を見る">' +
         '<div class="sum-main">' +
           '<div><span class="sum-kcal">' + kcal + '</span><span class="sum-unit">kcal</span></div>' +
-          '<div class="sum-goal">目標 ' + goal + ' kcal</div>' +
+          '<div class="sum-meta"><div class="sum-goal">目標 ' + goal + ' kcal</div>' +
+            '<span class="sum-action">採点を見る ›</span></div>' +
         '</div>' +
         '<div class="bar' + (over ? ' over' : '') + '"><i style="width:' + pct + '%"></i></div>' +
         '<div class="sum-goal">' +
@@ -87,7 +88,7 @@
             '品はカロリーしか登録されていないため、PFCに反映されていません。' +
             'その食品をタップ →「栄養素を入力」で補えます。</div>'
           : '') +
-      '</div>';
+      '</button>';
   }
 
   /* 取り込んだ過去データなど、カロリーしか持たない食品があるので、
@@ -126,16 +127,17 @@
           return k === 'protein' || k === 'fat' || k === 'carb';
         });
         var pfc = hasPfc(n)
-          ? ' ・ ' + (estimatedPfc ? '約 ' : '') + 'P' + N.fmt(n.protein || 0) +
+          ? (estimatedPfc ? '約 ' : '') + 'P' + N.fmt(n.protein || 0) +
             ' F' + N.fmt(n.fat || 0) + ' C' + N.fmt(n.carb || 0) +
             (estimatedPfc ? ' <span class="muted">（推定）</span>' : '')
-          : ' ・ <span class="muted">P— F— C—（栄養素は未登録）</span>';
+          : '<span class="muted">P— F— C—（栄養素は未登録）</span>';
         var registered = linkedNames && linkedNames[F.norm(e.name)]
           ? ' <span class="tag registered">登録済み</span>' : '';
         h += '<div class="item" data-entry="' + A().esc(e.id) + '">' +
           '<div class="grow"><div class="item-name ellip">' + A().esc(e.name) + registered + '</div>' +
-          '<div class="item-sub">' + A().esc(amountText(e)) + pfc + '</div></div>' +
-          '<div class="item-kcal">' + Math.round(n.kcal || 0) + '</div></div>';
+          '<div class="item-sub">' + pfc + '</div></div>' +
+          '<div class="item-metrics"><span class="item-amount">' + A().esc(amountText(e)) + '</span>' +
+          '<span class="item-kcal">' + Math.round(n.kcal || 0) + '</span></div></div>';
       });
     }
     h += '<div class="add-row">' +
@@ -174,8 +176,9 @@
   function bind(view, state) {
     view.addEventListener('click', function (ev) {
       var t = ev.target.closest(
-        '[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip]');
+        '[data-open-score],[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip]');
       if (!t) return;
+      if (t.hasAttribute('data-open-score')) return A().setTab('advice');
       if (t.dataset.skip) {
         return S.Entries.setSkipped(state.date, t.dataset.skip, true).then(function () {
           A().toast(slotName(t.dataset.skip) + 'を「食べなかった」にしました');

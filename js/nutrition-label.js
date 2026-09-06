@@ -6,7 +6,8 @@
     { key: 'kcal', names: ['エネルギー', '熱量'], unit: 'kcal' },
     { key: 'protein', names: ['たんぱく質', '蛋白質', 'タンパク質'], unit: 'g' },
     { key: 'fat', names: ['脂質'], unit: 'g' },
-    { key: 'carb', names: ['炭水化物', '糖質'], unit: 'g' },
+    { key: 'carb', names: ['炭水化物'], unit: 'g' },
+    { key: '_labelSugar', names: ['糖質'], unit: 'g' },
     { key: 'fiber', names: ['食物繊維'], unit: 'g' },
     { key: 'salt', names: ['食塩相当量'], unit: 'g' },
     { key: 'sodium', names: ['ナトリウム'], unit: 'mg' },
@@ -100,11 +101,22 @@
         }
         return;
       }
-      // 「炭水化物」と「糖質」が両方あれば先に出た炭水化物を維持する。
+      if (rule.key === '_labelSugar') {
+        nutrients._labelSugar = Math.round(value * 100000) / 100000;
+        return;
+      }
       if (typeof nutrients[rule.key] === 'number') return;
       nutrients[rule.key] = Math.round(value * 100000) / 100000;
       foundKeys.push(rule.key);
     });
+    // 炭水化物の表示が無い商品では、糖質と食物繊維を合算する。
+    // 3項目すべてがあるときは、メーカー表示の「炭水化物」を優先する。
+    if (typeof nutrients.carb !== 'number' && typeof nutrients._labelSugar === 'number') {
+      nutrients.carb = Math.round((nutrients._labelSugar +
+        (typeof nutrients.fiber === 'number' ? nutrients.fiber : 0)) * 100000) / 100000;
+      foundKeys.push('carb');
+    }
+    delete nutrients._labelSugar;
     var p = portion(normalized);
     return {
       nutrients: nutrients, foundKeys: foundKeys,

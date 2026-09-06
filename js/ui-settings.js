@@ -52,8 +52,8 @@
         '" value="' + (st.manualKcal || '') + '"></label>' +
       '<label class="fld"><span>1日の運動目標 (kcal相当)</span>' +
         '<input type="number" inputmode="numeric" id="sExercise" min="1" step="10" value="' +
-        (st.exerciseKcalGoal || 200) + '"></label>' +
-      '<div class="tiny muted">運動記録と歩数（8,000歩≒200kcal）を合算して採点します。</div>' +
+        (st.exerciseKcalGoal || 322) + '"></label>' +
+      '<div class="tiny muted">歩数由来の記録は重ねず、歩数換算を優先します。歩数以外の運動は加算します。</div>' +
       '<div class="small muted">現在の体重 ' + (w ? N.fmt(w) + ' kg' : '未記録') +
         ' から、推定基礎代謝 <b>' + tg._bmr + ' kcal</b>、1日の消費目安 <b>' + tg._tdee +
         ' kcal</b>、目標摂取 <b>' + tg.kcal.goal + ' kcal</b> と計算しています。' +
@@ -170,7 +170,7 @@
     });
     on(view, '#sExercise', 'change', function (e) {
       var v = parseInt(e.target.value, 10);
-      save({ exerciseKcalGoal: isFinite(v) && v > 0 ? v : 200 });
+      save({ exerciseKcalGoal: isFinite(v) && v > 0 ? v : 322 });
     });
     on(view, '#sToilet', 'change', function (e) {
       var list = e.target.value.split(',').map(function (x) { return x.trim(); })

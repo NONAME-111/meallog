@@ -236,5 +236,13 @@
     return load().then(function (model) { return supplement(name, model); });
   }
 
-  global.Estimate = { load: load, fill: fill, isExcluded: isExcluded, MODEL_VERSION: 1 };
+  // 採点画面の食品区分でも、推定除外と同じサプリ判定を再利用する。
+  // 呼び出し前に load() を待つこと。
+  function isSupplement(name) {
+    return MODEL ? supplement(name, MODEL) : false;
+  }
+
+  global.Estimate = {
+    load: load, fill: fill, isExcluded: isExcluded, isSupplement: isSupplement, MODEL_VERSION: 1
+  };
 })(window);

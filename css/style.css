@@ -1,6 +1,7 @@
 :root{
   --green:#3aa76d; --green-d:#2c8a58; --green-l:#e8f6ee;
   --orange:#f0902b; --red:#e0503f; --blue:#3d7fd6;
+  --src-normal:#91bd48;--src-sweets:#ff6b32;--src-alcohol:#63add8;--src-supplement:#f5b52e;
   --bg:#f4f5f7; --card:#fff; --line:#e3e6ea;
   --tx:#20242a; --tx2:#6b727d; --tx3:#9aa1ab;
   --hdr:56px; --tabh:calc(54px + env(safe-area-inset-bottom));
@@ -45,7 +46,7 @@ input,select,textarea{font:inherit;color:inherit}
 
 /* ---- 共通 ---- */
 #view{padding:10px 12px 24px}
-.card{background:var(--card);border-radius:var(--r);padding:14px;margin-bottom:10px;
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:10px;
   box-shadow:0 1px 2px rgba(0,0,0,.05)}
 .card h3{margin:0 0 10px;font-size:14px;font-weight:700}
 .muted{color:var(--tx2)}
@@ -77,7 +78,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 /* ---- サマリ(記録タブ上部) ---- */
 .summary{background:linear-gradient(135deg,var(--green),var(--green-d));color:#fff;
-  border-radius:var(--r);padding:14px;margin-bottom:10px}
+  border:1px solid transparent;border-radius:var(--r);padding:14px;margin-bottom:10px}
+.summary-link{display:block;width:100%;text-align:left;cursor:pointer}
+.summary-link:focus-visible{outline:3px solid color-mix(in srgb,var(--green) 45%,white);outline-offset:2px}
+.sum-meta{text-align:right}
+.sum-action{display:inline-block;margin-top:4px;padding:2px 7px;border:1px solid rgba(255,255,255,.52);
+  border-radius:999px;font-size:10px;font-weight:700}
 .sum-main{display:flex;align-items:baseline;justify-content:space-between}
 .sum-kcal{font-size:30px;font-weight:800;line-height:1}
 .sum-unit{font-size:12px;opacity:.85;margin-left:3px}
@@ -113,6 +119,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .item-name{font-size:14px}
 .item-sub{font-size:11px;color:var(--tx2)}
 .item-kcal{font-size:13px;font-weight:700;white-space:nowrap}
+.item-metrics{display:flex;align-items:baseline;justify-content:flex-end;gap:9px;white-space:nowrap;flex:none}
+.item-amount{font-size:12px;color:var(--tx2);font-weight:700}
 .add-row{display:flex;gap:8px;margin-top:10px}
 .add-row .btn{flex:1}
 .empty{color:var(--tx3);font-size:13px;padding:6px 0}
@@ -164,6 +172,17 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .nut-detail .nut-name{width:auto;font-size:12px;font-weight:600}
 .nut-detail .nut-val{width:auto;text-align:right;font-size:11px;flex:1}
 .nut-detail .nut-bar{width:100%;height:7px;margin-top:6px}
+.nut-bar.source-stack{display:flex}
+.nut-bar.source-stack > i{display:block;height:100%;border-radius:0;flex:none}
+.nut-bar.source-stack > i:first-child{border-radius:99px 0 0 99px}
+.nut-bar.source-stack > i:last-child{border-radius:0 99px 99px 0}
+.src-normal{background:var(--src-normal)}
+.src-sweets{background:var(--src-sweets)}
+.src-alcohol{background:var(--src-alcohol)}
+.src-supplement{background:var(--src-supplement)}
+.source-legend{display:flex;flex-wrap:wrap;gap:5px 11px;margin:10px 0 1px;color:var(--tx2);font-size:10px}
+.source-legend span{display:flex;align-items:center;gap:4px}
+.source-legend i{display:inline-block;width:10px;height:10px;border-radius:3px}
 .nut-flags{display:flex;gap:7px;justify-content:flex-end;min-height:15px;margin-top:4px;
   color:var(--tx3);font-size:10px}
 .nut-flags .rich-hint{color:var(--green);font-weight:600}
@@ -190,8 +209,8 @@ canvas.chart{width:100%;height:190px;display:block}
 /* ---- シート ---- */
 .sheet{position:fixed;inset:0;z-index:60}
 .sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
-.sheet-panel{position:absolute;left:0;right:0;bottom:0;max-height:92vh;background:var(--bg);
-  border-radius:16px 16px 0 0;display:flex;flex-direction:column;
+.sheet-panel{position:absolute;left:0;right:0;bottom:0;max-height:92vh;background:var(--card);
+  border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;display:flex;flex-direction:column;
   padding-bottom:env(safe-area-inset-bottom);animation:up .22s ease-out}
 @keyframes up{from{transform:translateY(18px);opacity:.6}to{transform:none;opacity:1}}
 .sheet-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
@@ -226,34 +245,43 @@ canvas.chart{width:100%;height:190px;display:block}
 .log-line{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:13px}
 
 @media (prefers-color-scheme: dark){
-  :root{--bg:#14171b;--card:#1c2026;--line:#2c323a;--tx:#e9ecf0;--tx2:#a4acb7;--tx3:#767e89;--green-l:#1e3a2c}
+  :root{--bg:#101419;--card:#1d242c;--line:#3a4551;--tx:#edf1f5;--tx2:#b0bac5;--tx3:#7f8995;--green-l:#1e3a2c}
   .seg{background:#252b32}
   .seg button.on{background:#39414b}
   .tab{color:var(--tx3)}
-  #tabbar{background:#1c2026}
-  .btn.sub{background:#2a3038;color:var(--tx)}
-  .chip{background:#2a3038}
-  .nut-bar{background:#2a3038}
-  .score-group-bar{background:#2a3038}
+  #tabbar{background:#1d242c}
+  .btn.sub{background:#2b3540;color:var(--tx);border:1px solid #3e4a57}
+  .chip{background:#2b3540;border:1px solid #3e4a57}
+  .nut-bar{background:#2b3540}
+  .score-group-bar{background:#2b3540}
   .nut-detail.tappable:active{background:#242a31}
   .exercise-connect{background:#222c28}
   .tag.registered{background:#19372a}
   input[type=text],input[type=number],input[type=date],input[type=time],select,textarea{
-    background:#1c2026;border-color:var(--line)}
-  .tap-btn{background:#1c2026}
-  .sheet-head{background:#1c2026}
+    background:#111820;border-color:#465564;box-shadow:inset 0 1px 2px rgba(0,0,0,.35)}
+  .tap-btn{background:#202832;border-color:#465564}
+  .sheet-head{background:#202832}
+  .sheet-close{background:#2b3540;border:1px solid #465564;border-radius:7px;color:var(--tx);padding:6px 9px}
 }
 
 /* v08 / Codex v1: お通じ・トイレをまとめた記録と月カレンダー */
 .elimination-card h3{margin:0}
-.bowel-choices{margin-top:12px}
-.bowel-choices .chip{min-width:62px;padding:8px 14px}
+.bowel-row{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:42px}
+.bowel-row h3{white-space:nowrap}
+.bowel-choices{display:flex;align-items:center;gap:5px;margin-left:auto}
+.bowel-choices .chip{min-width:54px;padding:7px 10px;margin:0}
 .calendar-open{color:var(--green);font-size:12px;min-height:40px;padding:6px}
 .toilet-section{border-top:1px solid var(--line);margin-top:12px;padding-top:14px}
 .toilet-actions{display:grid;gap:8px;margin-top:10px}
 .toilet-add{display:flex;align-items:center;justify-content:space-between;min-height:54px;
   padding:10px 14px;background:var(--green-l);color:var(--green-d);border-radius:10px;font-weight:700}
 .toilet-count{font-size:18px}
+.toilet-interval{color:var(--tx2);font-size:11px}
+.step-import-help{margin:7px 0 10px;color:var(--tx2);font-size:11px}
+.step-first{margin:0 0 10px;padding:9px;border-radius:8px;background:var(--green-l);color:var(--green-d);font-size:11px}
+.step-guide{margin:8px 0 14px;padding-left:22px;color:var(--tx2);font-size:12px}
+.step-guide li{margin:4px 0}
+.step-guide code{font-size:11px}
 .cal-header{display:flex;align-items:center;justify-content:space-between;margin:0 0 16px}
 .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
 .cal-week{font-size:12px;color:var(--tx2);text-align:center;margin-bottom:7px}
@@ -265,5 +293,5 @@ canvas.chart{width:100%;height:190px;display:block}
 .cal-day.selected{border-color:var(--green)}
 @media(prefers-color-scheme:dark){
   :root{--blue:#76aaff}
-  .toilet-add,.cal-day.has-bowel{color:#86d9ad}
+  .toilet-add,.cal-day.has-bowel,.step-first{color:#86d9ad}
 }

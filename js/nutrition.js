@@ -76,7 +76,7 @@
     Object.keys(LIMIT).forEach(function (k) {
       t[k] = { goal: LIMIT[k][sexIdx], kind: 'max' };
     });
-    t.exercise = { goal: Math.max(1, Math.round(settings.exerciseKcalGoal || 200)), kind: 'min' };
+    t.exercise = { goal: Math.max(1, Math.round(settings.exerciseKcalGoal || 322)), kind: 'min' };
     t._bmr = bmr(settings, w);
     t._tdee = tdee(settings, w);
     return t;

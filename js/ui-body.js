@@ -41,6 +41,9 @@
     }
     var diff = (prev && rec.weight) ? (rec.weight - prev.weight) : null;
     var toGoal = (st.goalWeight && rec.weight) ? (rec.weight - st.goalWeight) : null;
+    var hasAnySteps = history.some(function (x) {
+      return typeof x.steps === 'number' && isFinite(x.steps);
+    });
 
     return '<div class="card"><h3>体重・体脂肪</h3>' +
       '<div class="grid2">' +
@@ -51,7 +54,9 @@
       '</div>' +
       '<label class="fld"><span>歩数</span><input type="number" inputmode="numeric" ' +
         'id="bSteps" value="' + (rec.steps == null ? '' : rec.steps) + '"></label>' +
-      '<button class="btn sub sm" data-stepimport="1" style="margin-bottom:10px">歩数を取り込む</button>' +
+      '<button class="btn sub sm" data-stepimport="1">歩数を取り込む</button>' +
+      '<div class="step-import-help">iPhoneのショートカットで取り出した歩数を貼り付けます。</div>' +
+      (!hasAnySteps ? '<div class="step-first">まだ歩数を取り込んでいません。ボタンを押してショートカットの設定手順を確認してください。</div>' : '') +
       '<div class="small muted">' +
         (bmi ? 'BMI ' + N.fmt(bmi) + '（' + bmiLabel(bmi) + '）' : 'BMIは身長の設定後に表示されます') +
         (diff != null ? ' ／ 前回比 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg' : '') +
@@ -110,13 +115,12 @@
   /* ---- お通じ ---- */
   function bowelCard(rec) {
     var opts = [['yes', 'あり'], ['no', 'なし']];
-    return '<section class="bowel-section"><div class="row between"><h3>お通じ</h3>' +
-      '<button class="calendar-open" data-bowelcalendar="1" aria-label="お通じカレンダーを開く">📅 カレンダー</button></div><div class="bowel-choices">' +
+    return '<section class="bowel-section"><div class="bowel-row"><h3>お通じ</h3><div class="bowel-choices">' +
       opts.map(function (o) {
         return '<button class="chip' + (rec.bowel === o[0] ? ' on' : '') +
           '" data-bowel="' + o[0] + '">' + o[1] + '</button>';
-      }).join('') +
-      (rec.bowel ? '<button class="chip" data-bowel="">記録を消す</button>' : '') +
+      }).join('') + '</div>' +
+      '<button class="calendar-open" data-bowelcalendar="1" aria-label="お通じカレンダーを開く">📅 <span>履歴</span></button>' +
       '</div></section>';
   }
 
@@ -140,7 +144,9 @@
       var list = rec.toilet.slice().sort(function (a, b) { return a.t < b.t ? -1 : 1; });
       h += '<div style="margin-top:10px">';
       list.forEach(function (x, i) {
-        h += '<div class="log-line"><span>' + A().esc(x.t) + ' ・ ' + A().esc(x.type) + '</span>' +
+        var interval = i ? toiletInterval(list[i - 1].t, x.t) : '';
+        h += '<div class="log-line"><span>' + A().esc(x.t) + ' ・ ' + A().esc(x.type) +
+          (interval ? ' <span class="toilet-interval">（前回から ' + interval + '）</span>' : '') + '</span>' +
           '<button class="tiny muted" data-delToilet="' + i + '" style="text-decoration:underline">削除</button></div>';
       });
       h += '</div>';
@@ -148,6 +154,19 @@
       h += '<div class="empty" style="margin-top:6px">ボタンを押すと、その時刻で記録されます</div>';
     }
     return h + '</section>';
+  }
+
+  function toiletInterval(previous, current) {
+    function minutes(value) {
+      var m = /^(\d{1,2}):(\d{2})$/.exec(String(value || ''));
+      if (!m) return null;
+      var h = Number(m[1]), min = Number(m[2]);
+      return h < 24 && min < 60 ? h * 60 + min : null;
+    }
+    var from = minutes(previous), to = minutes(current);
+    if (from == null || to == null || to < from) return '';
+    var diff = to - from, hours = Math.floor(diff / 60), mins = diff % 60;
+    return (hours ? hours + '時間' : '') + (mins || !hours ? mins + '分' : '');
   }
 
   function memoCard(rec) {
@@ -193,7 +212,8 @@
       if (t.hasAttribute('data-editfields')) return editFields(state, st);
 
       if (t.hasAttribute('data-bowel')) {
-        return save({ bowel: t.getAttribute('data-bowel') }, true);
+        var bowel = t.getAttribute('data-bowel');
+        return save({ bowel: rec.bowel === bowel ? '' : bowel }, true);
       }
       if (t.hasAttribute('data-toilet')) {
         var d = new Date();

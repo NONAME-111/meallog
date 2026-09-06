@@ -11,6 +11,10 @@
   ];
   var period = 1;
   var openGroups = { pfc: true };
+  var sourceFoodById = {};
+  var sourceSweetRules = [];
+  var SOURCE_TYPES = ['normal', 'sweets', 'alcohol', 'supplement'];
+  var ALCOHOL_NAME = /酒|ビール|ワイン|焼酎|日本酒|ハイボール|ウイスキー|ウィスキー|ブランデー|チューハイ|サワー|梅酒|カクテル|ホッピー|発泡酒|シャンパン|モルツ|エール|ストロング|スーパードライ|贅沢搾り|ほろよい|氷結|檸檬堂|金麦|淡麗|本麒麟|クリアアサヒ/i;
 
   var GROUPS = [
     { key: 'kcal', icon: '🔥', label: 'カロリー', weight: 20, scored: ['kcal'], extra: [] },
@@ -25,8 +29,25 @@
   ];
 
   function render(view, state) {
-    return (period === 1 ? renderDay(view, state) : renderRange(view, state, period))
+    return prepareSourceClassification().then(function () {
+      return period === 1 ? renderDay(view, state) : renderRange(view, state, period);
+    })
       .then(function () { bind(view, state); });
+  }
+
+  function prepareSourceClassification() {
+    return Promise.all([F.load(), F.loadProducts(), F.loadCategories(), global.Estimate.load()]).then(function (r) {
+      sourceFoodById = {};
+      (r[0].foods || []).forEach(function (food) { sourceFoodById[food.id] = food; });
+      sourceSweetRules = (r[2].rules || []).filter(function (rule) {
+        return String(rule.grp) === '15';
+      }).map(function (rule) {
+        return {
+          kw: (rule.kw || []).map(F.norm).filter(Boolean),
+          not: (rule.not || []).map(F.norm).filter(Boolean)
+        };
+      });
+    });
   }
 
   function segHtml() {
@@ -47,8 +68,14 @@
       var group = ev.target.closest('[data-score-group]');
       if (group) {
         var key = group.getAttribute('data-score-group');
-        openGroups[key] = !openGroups[key];
-        A().render();
+        var opened = group.getAttribute('aria-expanded') !== 'true';
+        var section = group.closest('.score-group');
+        var body = section && section.querySelector('.score-group-body');
+        var arrow = group.querySelector('[data-group-arrow]');
+        openGroups[key] = opened;
+        group.setAttribute('aria-expanded', opened ? 'true' : 'false');
+        if (body) body.hidden = !opened;
+        if (arrow) arrow.textContent = opened ? '⌃' : '⌄';
         return;
       }
       var rich = ev.target.closest('[data-rich]');
@@ -58,17 +85,27 @@
 
   function activityFor(exercises, body) {
     exercises = exercises || [];
-    var exerciseKcal = exercises.reduce(function (sum, x) {
+    var walkExerciseKcal = exercises.filter(function (x) {
+      return /歩数/.test(x.name || '');
+    }).reduce(function (sum, x) {
+      return sum + (typeof x.kcal === 'number' && isFinite(x.kcal) ? x.kcal : 0);
+    }, 0);
+    var exerciseKcal = exercises.filter(function (x) {
+      return !/歩数/.test(x.name || '');
+    }).reduce(function (sum, x) {
       return sum + (typeof x.kcal === 'number' && isFinite(x.kcal) ? x.kcal : 0);
     }, 0);
     var hasExercise = exercises.length > 0;
     var hasSteps = !!(body && typeof body.steps === 'number' && isFinite(body.steps));
     var steps = hasSteps ? Math.max(0, body.steps) : null;
-    var stepKcal = hasSteps ? steps * 0.025 : 0; // 8,000歩 ≒ 200kcal
+    // 歩数記録とbody.stepsは同じ歩行を表すため、併存時は更新可能なbody.stepsを優先する。
+    var stepKcal = hasSteps ? steps * 0.025 : walkExerciseKcal;
     return {
       hasData: hasExercise || hasSteps,
       value: F.round(exerciseKcal + stepKcal, 1),
-      exerciseKcal: F.round(exerciseKcal, 1), stepKcal: F.round(stepKcal, 1), steps: steps
+      exerciseKcal: F.round(exerciseKcal, 1), stepKcal: F.round(stepKcal, 1),
+      walkExerciseKcal: F.round(walkExerciseKcal, 1), steps: steps,
+      walkSource: hasSteps ? 'steps' : (walkExerciseKcal ? 'exercise' : '')
     };
   }
 
@@ -76,9 +113,8 @@
     totals = Object.assign({}, totals || {});
     coverage = Object.assign({}, coverage || {});
     estimated = Object.assign({}, estimated || {});
-    if (activity.hasData) totals.exercise = activity.value;
-    else delete totals.exercise;
-    coverage.exercise = activity.hasData ? 1 : 0;
+    totals.exercise = activity && typeof activity.value === 'number' ? activity.value : 0;
+    coverage.exercise = 1;
     estimated.exercise = 0;
     return { totals: totals, coverage: coverage, estimated: estimated };
   }
@@ -106,8 +142,9 @@
       var missing = ['breakfast', 'lunch', 'dinner'].filter(function (key) {
         return !slots[key] && !S.Entries.isSkipped(all, key);
       });
+      var sources = sourceBreakdown(entries, data.totals);
       view.innerHTML = segHtml() + scoreCard(sc, hasEntries, missing, '') + commentCard(cmts) +
-        importedCard(dt.imported) + groupedCard(sc, data.totals, tg, data.coverage, data.estimated, activity);
+        importedCard(dt.imported) + groupedCard(sc, data.totals, tg, data.coverage, data.estimated, activity, sources);
     });
   }
 
@@ -131,7 +168,8 @@
           }
           return {
             date: date, totals: data.totals, coverage: data.coverage, estimated: data.estimated,
-            activity: activity, tracked: real.length > 0 || (byDay[date] || []).length > 0
+            activity: activity, sources: sourceBreakdown(real, data.totals),
+            tracked: real.length > 0 || (byDay[date] || []).length > 0
           };
         });
       })).then(function (daysData) {
@@ -163,22 +201,94 @@
         var activeDays = tracked.filter(function (x) { return x.activity.hasData; });
         var rangeActivity = {
           hasData: activeDays.length > 0,
-          value: activeDays.length ? F.round(activeDays.reduce(function (s, x) { return s + x.activity.value; }, 0) / activeDays.length, 1) : 0,
-          exerciseKcal: activeDays.length ? F.round(activeDays.reduce(function (s, x) { return s + x.activity.exerciseKcal; }, 0) / activeDays.length, 1) : 0,
-          stepKcal: activeDays.length ? F.round(activeDays.reduce(function (s, x) { return s + x.activity.stepKcal; }, 0) / activeDays.length, 1) : 0,
-          steps: null, days: activeDays.length, totalDays: tracked.length
+          value: F.round(tracked.reduce(function (s, x) { return s + x.activity.value; }, 0) / tracked.length, 1),
+          exerciseKcal: F.round(tracked.reduce(function (s, x) { return s + x.activity.exerciseKcal; }, 0) / tracked.length, 1),
+          stepKcal: F.round(tracked.reduce(function (s, x) { return s + x.activity.stepKcal; }, 0) / tracked.length, 1),
+          steps: null, days: activeDays.length, totalDays: tracked.length, isRange: true
         };
-        if (rangeActivity.hasData) avg.exercise = rangeActivity.value;
-        avgCoverage.exercise = activeDays.length / tracked.length;
+        avg.exercise = rangeActivity.value;
+        avgCoverage.exercise = 1;
         avgEstimated.exercise = 0;
         var sc = N.score(avg, tg, { coverage: avgCoverage, estimated: avgEstimated });
         var cmts = N.comments(sc, tg, { hasEntries: true });
         var note = days + '日のうち ' + tracked.length + ' 日分の平均です' +
           (tracked.length < days ? '（記録のない ' + (days - tracked.length) + ' 日は除いています）' : '');
+        var sources = averageSourceBreakdown(tracked);
         view.innerHTML = segHtml() + scoreCard(sc, true, [], note) + commentCard(cmts) +
-          dailyScoreCard(daysData, tg) + groupedCard(sc, avg, tg, avgCoverage, avgEstimated, rangeActivity);
+          dailyScoreCard(daysData, tg) + groupedCard(sc, avg, tg, avgCoverage, avgEstimated, rangeActivity, sources);
       });
     });
+  }
+
+  function entrySourceType(entry) {
+    var name = String((entry && entry.name) || '');
+    if (global.Estimate && global.Estimate.isSupplement(name)) return 'supplement';
+    if (ALCOHOL_NAME.test(name)) return 'alcohol';
+    var ref = entry && entry.ref;
+    var food = ref && sourceFoodById[ref.id];
+    if (food && String(food.g) === '15') return 'sweets';
+    var product = F.productFor(name);
+    if (product && /成分表\s*15\d{3}/.test(product.src || '')) return 'sweets';
+    var normalized = F.norm(name);
+    if (sourceSweetRules.some(function (rule) {
+      return !rule.not.some(function (word) { return normalized.indexOf(word) !== -1; }) &&
+        rule.kw.some(function (word) { return normalized.indexOf(word) !== -1; });
+    })) return 'sweets';
+    return 'normal';
+  }
+
+  function sourceKeys() {
+    var seen = {}, keys = [];
+    F.KEYS.concat(['sugar']).forEach(function (key) {
+      if (!seen[key]) { seen[key] = true; keys.push(key); }
+    });
+    return keys;
+  }
+
+  function blankSources() {
+    var out = {};
+    sourceKeys().forEach(function (key) {
+      out[key] = { normal: 0, sweets: 0, alcohol: 0, supplement: 0 };
+    });
+    return out;
+  }
+
+  function sourceBreakdown(entries, totals) {
+    var out = blankSources();
+    (entries || []).filter(S.notSkip).forEach(function (entry) {
+      var type = entrySourceType(entry), nutrients = entry.nutrients || {};
+      sourceKeys().forEach(function (key) {
+        var value = nutrients[key];
+        if (key === 'sugar' && !(typeof value === 'number' && isFinite(value))) value = F.sugarOf(nutrients);
+        if (typeof value === 'number' && isFinite(value) && value > 0) out[key][type] += value;
+      });
+    });
+    sourceKeys().forEach(function (key) {
+      var total = totals && totals[key];
+      if (!(typeof total === 'number' && isFinite(total)) || total < 0) return;
+      var known = SOURCE_TYPES.reduce(function (sum, type) { return sum + out[key][type]; }, 0);
+      if (!known) { out[key].normal = total; return; }
+      if (known > total) {
+        SOURCE_TYPES.forEach(function (type) { out[key][type] *= total / known; });
+      } else {
+        // 日次集計で補われた分と分類不能分は通常食品として扱う。
+        out[key].normal += total - known;
+      }
+    });
+    return out;
+  }
+
+  function averageSourceBreakdown(days) {
+    var out = blankSources(), count = days.length || 1;
+    days.forEach(function (day) {
+      sourceKeys().forEach(function (key) {
+        SOURCE_TYPES.forEach(function (type) { out[key][type] += day.sources[key][type] || 0; });
+      });
+    });
+    sourceKeys().forEach(function (key) {
+      SOURCE_TYPES.forEach(function (type) { out[key][type] = F.round(out[key][type] / count, 3); });
+    });
+    return out;
   }
 
   function dailyScoreCard(daysData, tg) {
@@ -239,11 +349,11 @@
     }).join('') + '</div>';
   }
 
-  function groupedCard(sc, totals, tg, coverage, estimated, activity) {
+  function groupedCard(sc, totals, tg, coverage, estimated, activity, sources) {
     var byKey = {};
     sc.detail.forEach(function (d) { byKey[d.key] = d; });
     var h = '<div class="card score-groups"><div class="row between"><h3>採点と摂取量</h3>' +
-      '<span class="tiny muted">区分をタップして展開</span></div>';
+      '<span class="tiny muted">区分をタップして展開</span></div>' + sourceLegend();
     GROUPS.forEach(function (group) {
       var opened = !!openGroups[group.key], sum = 0, included = 0;
       group.scored.forEach(function (key) {
@@ -257,24 +367,39 @@
         '" aria-expanded="' + opened + '"><span class="score-group-title"><span>' + group.icon + '</span><b>' +
         group.label + '</b></span><span class="score-group-result ' + color + '">' +
         (points == null ? '対象外' : N.fmt(points) + ' / ' + group.weight + '点') +
-        ' <i>' + (opened ? '⌃' : '⌄') + '</i></span></button>' +
+        ' <i data-group-arrow="1">' + (opened ? '⌃' : '⌄') + '</i></span></button>' +
         '<div class="score-group-bar"><i class="' + color + '" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></i></div>';
-      if (opened) {
-        h += '<div class="score-group-body">';
-        group.scored.concat(group.extra).forEach(function (key) {
-          h += nutrientRow(key, byKey[key], totals, tg, coverage, estimated, activity);
-        });
-        if (group.key === 'exercise' && (!activity || !activity.hasData)) {
-          h += '<div class="exercise-connect">歩数を連携すると運動も採点されます。記録タブで運動を追加することもできます。</div>';
-        }
-        h += '</div>';
+      h += '<div class="score-group-body"' + (opened ? '' : ' hidden') + '>';
+      group.scored.concat(group.extra).forEach(function (key) {
+        h += nutrientRow(key, byKey[key], totals, tg, coverage, estimated, activity, sources);
+      });
+      if (group.key === 'exercise' && (!activity || !activity.hasData)) {
+        h += '<div class="exercise-connect">歩数が取り込まれていません。カラダタブの「歩数を取り込む」で入れると採点されます</div>';
       }
+      h += '</div>';
       h += '</section>';
     });
     return h + '<div class="tiny muted score-source">目標値は「日本人の食事摂取基準(2025年版)」の18〜64歳の推奨量・目安量・目標量が基準です。</div></div>';
   }
 
-  function nutrientRow(key, detail, totals, tg, coverage, estimated, activity) {
+  function sourceLegend() {
+    return '<div class="source-legend" aria-label="栄養素の供給元">' +
+      '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
+      '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>';
+  }
+
+  function sourceBar(key, sources, ratio) {
+    var row = sources && sources[key];
+    var width = Math.max(0, Math.min(100, ratio * 100));
+    var sum = row ? SOURCE_TYPES.reduce(function (total, type) { return total + (row[type] || 0); }, 0) : 0;
+    if (!sum) return '<i class="src-normal" style="width:' + width + '%"></i>';
+    return SOURCE_TYPES.map(function (type) {
+      var part = width * (row[type] || 0) / sum;
+      return part > 0 ? '<i class="src-' + type + '" style="width:' + part + '%"></i>' : '';
+    }).join('');
+  }
+
+  function nutrientRow(key, detail, totals, tg, coverage, estimated, activity, sources) {
     var meta = F.meta(key), target = tg[key], value = detail ? detail.intake : totals[key];
     var known = typeof value === 'number' && isFinite(value);
     var cov = detail ? detail.coverage : (coverage && typeof coverage[key] === 'number' ? coverage[key] : (known ? 1 : 0));
@@ -288,14 +413,17 @@
     else if (target) cls = Math.abs(ratio - 1) <= 0.1 ? 'ok' : (Math.abs(ratio - 1) <= 0.25 ? 'high' : 'bad');
     var clickable = detail && !detail.excluded && detail.kind === 'min' && detail.ratio < 1 && key !== 'exercise';
     var tag = clickable ? 'button' : 'div';
-    var h = '<' + tag + ' class="nut-detail' + (clickable ? ' tappable' : '') + '"' +
+    var h = '<' + tag + ' class="nut-detail' + (clickable ? ' tappable' : '') +
+      '" data-nutrient="' + key + '"' +
       (clickable ? ' data-rich="' + key + '"' : '') + '><div class="nut-detail-top"><span class="nut-name">' +
       A().esc(meta[0]) + '</span><span class="nut-val"><b>' + (est > 0 ? '約' : '') +
       (known ? N.fmt(value) : '—') + '</b> ' + A().esc(meta[1]);
     if (target) h += ' <span class="muted">/ ' + N.fmt(limit) + (target.kind === 'min' ? '以上' : target.kind === 'max' ? '以下' : '') + '</span>';
     h += '</span></div>';
-    if (target) h += '<div class="nut-bar"><i class="' + cls + '" style="width:' +
-      Math.max(0, Math.min(100, ratio * 100)) + '%"></i></div>';
+    if (target) h += key === 'exercise'
+      ? '<div class="nut-bar"><i class="' + cls + '" style="width:' +
+        Math.max(0, Math.min(100, ratio * 100)) + '%"></i></div>'
+      : '<div class="nut-bar source-stack">' + sourceBar(key, sources, ratio) + '</div>';
     h += '<div class="nut-flags">' + (detail && detail.excluded ? '<span>採点対象外</span>' : '') +
       (key !== 'exercise' && cov < 0.999 ? '<span>カバー ' + Math.round(cov * 100) + '%</span>' : '') +
       (est > 0 ? '<span>推定 ' + Math.round(est * 100) + '%</span>' : '') +
@@ -324,5 +452,12 @@
     });
   }
 
-  Views.advice = { render: render };
+  Views.advice = {
+    render: render,
+    _activityFor: activityFor,
+    _addActivity: addActivity,
+    _prepareSourceClassification: prepareSourceClassification,
+    _sourceBreakdown: sourceBreakdown,
+    _entrySourceType: entrySourceType
+  };
 })(window);

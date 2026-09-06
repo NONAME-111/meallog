@@ -534,7 +534,7 @@
     goalDate: '',
     paceKgPerMonth: 2,        // 減量ペース
     manualKcal: null,         // 手動で目標kcalを上書き
-    exerciseKcalGoal: 200,    // 運動・歩数由来の1日消費目標
+    exerciseKcalGoal: 322,    // 運動・歩数由来の1日消費目標
     customFields: [           // カラダ記録の任意項目
       { id: 'kintore', label: '筋トレ', type: 'count', unit: '回' }
     ],
