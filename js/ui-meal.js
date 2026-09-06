@@ -156,8 +156,9 @@
   }
 
   function exerciseHtml(list, burned) {
+    var burnedDisplay = Math.max(0, Math.round(Number(burned) || 0));
     var h = '<div class="card"><div class="slot-head"><span class="slot-name">🏃 運動</span>' +
-      '<span class="slot-kcal">-' + Math.round(burned) + ' kcal</span></div>';
+      '<span class="slot-kcal">' + (burnedDisplay ? '-' + burnedDisplay : '0') + ' kcal</span></div>';
     if (!list.length) h += '<div class="empty">記録がありません</div>';
     else list.forEach(function (x) {
       h += '<div class="item" data-ex="' + A().esc(x.id) + '"><div class="grow">' +
