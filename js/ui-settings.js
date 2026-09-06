@@ -50,6 +50,10 @@
       '<label class="fld"><span>1日の目標カロリー</span>' +
         '<input type="number" inputmode="numeric" id="sKcal" placeholder="自動計算: ' + tg.kcal.goal +
         '" value="' + (st.manualKcal || '') + '"></label>' +
+      '<label class="fld"><span>1日の運動目標 (kcal相当)</span>' +
+        '<input type="number" inputmode="numeric" id="sExercise" min="1" step="10" value="' +
+        (st.exerciseKcalGoal || 200) + '"></label>' +
+      '<div class="tiny muted">運動記録と歩数（8,000歩≒200kcal）を合算して採点します。</div>' +
       '<div class="small muted">現在の体重 ' + (w ? N.fmt(w) + ' kg' : '未記録') +
         ' から、推定基礎代謝 <b>' + tg._bmr + ' kcal</b>、1日の消費目安 <b>' + tg._tdee +
         ' kcal</b>、目標摂取 <b>' + tg.kcal.goal + ' kcal</b> と計算しています。' +
@@ -84,7 +88,8 @@
           Math.round((m.nutrients && m.nutrients.kcal) || 0) + ' kcal' +
           (m.barcode ? ' ・ ' + A().esc(m.barcode) : '') + '</span></span>' +
           '<button class="tiny" data-delmy="' + A().esc(m.id) + '" ' +
-          'style="color:var(--red);text-decoration:underline;flex:none">削除</button></div>';
+          'style="color:var(--red);text-decoration:underline;flex:none">' +
+          (m.linked ? '紐付け解除' : '削除') + '</button></div>';
       });
       if (my.length > 30) h += '<div class="tiny muted" style="margin-top:6px">ほか ' + (my.length - 30) + ' 件</div>';
     }
@@ -123,7 +128,7 @@
 
   function aboutCard() {
     return '<div class="card"><h3>このアプリについて</h3>' +
-      '<div class="small">ミールログ <b>' + A().esc(document.getElementById('verLabel').textContent) + '</b></div>' +
+      '<div class="small">ミールログ <b>' + A().esc(A().version()) + '</b></div>' +
       '<div class="tiny muted" style="margin-top:6px">' +
       '栄養成分の出典: ' + A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') +
       '（収載 ' + F.count() + ' 品目）<br>' +
@@ -162,6 +167,10 @@
     on(view, '#sKcal', 'change', function (e) {
       var v = parseInt(e.target.value, 10);
       save({ manualKcal: isFinite(v) && v > 0 ? v : null });
+    });
+    on(view, '#sExercise', 'change', function (e) {
+      var v = parseInt(e.target.value, 10);
+      save({ exerciseKcalGoal: isFinite(v) && v > 0 ? v : 200 });
     });
     on(view, '#sToilet', 'change', function (e) {
       var list = e.target.value.split(',').map(function (x) { return x.trim(); })
@@ -269,26 +278,59 @@
     }
 
     function mergeProduct(e, isMyFood) {
-      var p = global.Foods.productFor(e.name);
-      if (!p || !p.nut) return false;
       var unit = isMyFood
         ? (e.basis === 'serving' ? (e.servingLabel || '食') : 'g')
         : (e.unit || 'g');
-      if (!isMyFood && p.u !== unit) return false;
-      var amount = isMyFood ? 1 : (e.amount || 1);
-      var changed = false, nut = {}, old = e.nutrients || {};
-      for (var k in old) nut[k] = old[k];
-      for (var key in p.nut) {
-        if (typeof p.nut[key] !== 'number' || typeof nut[key] === 'number') continue;
-        nut[key] = Math.round(p.nut[key] * amount * 1000) / 1000;
-        changed = true;
+      var amount = isMyFood ? (e.basis === '100g' ? 100 : 1) : (e.amount || 1);
+      var result = global.Foods.mergeProduct(e.name, e.nutrients || {}, unit, amount,
+        (e.est && e.est.keys) || []);
+      if (result.changed) {
+        e.nutrients = result.nutrients;
+        if (e.est && e.est.keys) {
+          var remaining = e.est.keys.filter(function (key) {
+            return (result.appliedKeys || []).indexOf(key) === -1;
+          });
+          if (remaining.length) e.est = Object.assign({}, e.est, { keys: remaining });
+          else delete e.est;
+        }
       }
-      if (changed) e.nutrients = nut;
+      return result.changed;
+    }
+
+    function mergeLinked(e, linkedMap) {
+      var linked = linkedMap && linkedMap[global.Foods.norm(e.name)];
+      if (!linked) return false;
+      var unit = linked.basis === 'serving' ? (linked.servingLabel || '食') : 'g';
+      if (unit !== (e.unit || 'g')) return false;
+      var factor = unit === 'g' ? (e.amount || 0) / 100 : (e.amount || 0);
+      if (!(factor > 0)) return false;
+      var out = {}, old = e.nutrients || {}, oldEst = (e.est && e.est.keys) || [];
+      for (var k in old) out[k] = old[k];
+      var linkedEst = (linked.est && linked.est.keys) || [], nextEst = oldEst.slice(), changed = false;
+      for (var key in (linked.nutrients || {})) {
+        if (typeof linked.nutrients[key] !== 'number') continue;
+        var oldIsEstimate = nextEst.indexOf(key) !== -1;
+        if (typeof out[key] === 'number' && !oldIsEstimate) continue;
+        out[key] = Math.round(linked.nutrients[key] * factor * 1000) / 1000;
+        changed = true;
+        var pos = nextEst.indexOf(key), linkIsEstimate = linkedEst.indexOf(key) !== -1;
+        if (linkIsEstimate && pos === -1) nextEst.push(key);
+        if (!linkIsEstimate && pos !== -1) nextEst.splice(pos, 1);
+      }
+      if (changed) {
+        e.nutrients = out;
+        if (nextEst.length) {
+          e.est = Object.assign({}, e.est || linked.est || {}, { keys: nextEst });
+        } else delete e.est;
+        e.ref = { type: 'my', id: linked.id };
+      }
       return changed;
     }
 
-    function enrichRecord(e, isMyFood) {
+    function enrichRecord(e, isMyFood, linkedMap) {
+      var linkedChanged = !isMyFood && mergeLinked(e, linkedMap);
       var changed = mergeProduct(e, isMyFood);
+      changed = linkedChanged || changed;
       var unit = isMyFood
         ? (e.basis === 'serving' ? (e.servingLabel || '食') : 'g')
         : (e.unit || 'g');
@@ -305,13 +347,13 @@
       });
     }
 
-    function processBatches(records, isMyFood, label, writeBatch) {
+    function processBatches(records, isMyFood, label, writeBatch, linkedMap) {
       var total = records.length, index = 0, changed = 0;
       function oneBatch() {
         if (index >= total) return Promise.resolve(changed);
         var slice = records.slice(index, index + 100);
         return Promise.all(slice.map(function (rec) {
-          return enrichRecord(rec, isMyFood).then(function (didChange) {
+          return enrichRecord(rec, isMyFood, linkedMap).then(function (didChange) {
             if (didChange) changed++;
             return didChange ? rec : null;
           });
@@ -334,9 +376,11 @@
       global.Estimate.load()
     ]).then(function (r) {
       var entries = r[1].filter(S.notSkip), myfoods = r[2];
+      var linkedMap = {};
+      myfoods.forEach(function (m) { if (m.linked) linkedMap[global.Foods.norm(m.name)] = m; });
       return processBatches(entries, false, '食事記録', function (rows) {
         return S.Entries.putMany(rows);
-      }).then(function (entryFilled) {
+      }, linkedMap).then(function (entryFilled) {
         return processBatches(myfoods, true, 'マイ食品', function (rows) {
           return S.MyFoods.putMany(rows);
         }).then(function (myFilled) {

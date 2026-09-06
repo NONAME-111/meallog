@@ -477,6 +477,19 @@
         return reqp(s.index('barcode').getAll(IDBKeyRange.only(String(code))));
       }).then(function (rows) { return (rows && rows[0]) || null; });
     },
+    byName: function (name) {
+      var key = global.Foods && global.Foods.norm
+        ? global.Foods.norm(name) : String(name || '').trim().toLowerCase();
+      if (!key) return Promise.resolve(null);
+      return MyFoods.all().then(function (rows) {
+        for (var i = 0; i < rows.length; i++) {
+          var rowKey = global.Foods && global.Foods.norm
+            ? global.Foods.norm(rows[i].name) : String(rows[i].name || '').trim().toLowerCase();
+          if (rowKey === key) return rows[i];
+        }
+        return null;
+      });
+    },
     put: function (rec) {
       if (!rec.id) rec.id = uid();
       if (rec.barcode == null) rec.barcode = '';
@@ -521,6 +534,7 @@
     goalDate: '',
     paceKgPerMonth: 2,        // 減量ペース
     manualKcal: null,         // 手動で目標kcalを上書き
+    exerciseKcalGoal: 200,    // 運動・歩数由来の1日消費目標
     customFields: [           // カラダ記録の任意項目
       { id: 'kintore', label: '筋トレ', type: 'count', unit: '回' }
     ],

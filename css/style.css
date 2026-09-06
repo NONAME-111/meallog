@@ -28,7 +28,7 @@ input,select,textarea{font:inherit;color:inherit}
 }
 .hdr-btn{width:52px;height:100%;font-size:28px;line-height:1;color:#fff;opacity:.9}
 .hdr-center{display:flex;flex-direction:column;align-items:center;line-height:1.15}
-.date-label{color:#fff;font-weight:700;font-size:16px}
+.date-label{color:#fff;font-weight:800;font-size:21px;letter-spacing:.01em}
 .ver{font-size:10px;opacity:.75}
 
 /* ---- タブバー ---- */
@@ -139,6 +139,50 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .advice-li{display:flex;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
 .advice-li:first-child{border-top:0}
 
+/* ---- v11 採点の5区分 ---- */
+.score-groups > .row h3{margin:0}
+.score-group{border-top:1px solid var(--line);padding:11px 0 10px}
+.score-group:first-of-type{margin-top:9px}
+.score-group-head{width:100%;display:flex;align-items:center;justify-content:space-between;
+  gap:10px;text-align:left;padding:0 1px}
+.score-group-title{display:flex;align-items:center;gap:8px;font-size:14px}
+.score-group-result{font-size:12px;font-weight:700;white-space:nowrap}
+.score-group-result.ok{background:none;color:var(--green)}
+.score-group-result.high{background:none;color:var(--orange)}
+.score-group-result.bad{background:none;color:var(--red)}
+.score-group-result.muted{color:var(--tx3)}
+.score-group-result i{font-style:normal;color:var(--tx3);margin-left:3px}
+.score-group-bar{height:7px;margin-top:8px;background:#eef0f3;border-radius:99px;overflow:hidden}
+.score-group-bar > i{display:block;height:100%;border-radius:99px}
+.score-group-bar > i.muted,.nut-detail .nut-bar > i.muted{background:var(--line)}
+.score-group-body{margin-top:10px;padding:0 3px 0 5px;border-left:2px solid var(--line)}
+.nut-detail{display:block;width:100%;padding:9px 5px;border-top:1px solid var(--line);text-align:left}
+.nut-detail:first-child{border-top:0}
+.nut-detail.tappable{border-radius:8px}
+.nut-detail.tappable:active{background:#f2f5f3}
+.nut-detail-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.nut-detail .nut-name{width:auto;font-size:12px;font-weight:600}
+.nut-detail .nut-val{width:auto;text-align:right;font-size:11px;flex:1}
+.nut-detail .nut-bar{width:100%;height:7px;margin-top:6px}
+.nut-flags{display:flex;gap:7px;justify-content:flex-end;min-height:15px;margin-top:4px;
+  color:var(--tx3);font-size:10px}
+.nut-flags .rich-hint{color:var(--green);font-weight:600}
+.activity-breakdown{text-align:right;margin-top:3px}
+.exercise-connect{margin:8px 5px 2px;padding:9px;border-radius:8px;background:#f2f7f4;
+  color:var(--tx2);font-size:11px}
+.score-source{margin-top:8px}
+
+/* ---- v11 栄養素入力 ---- */
+.estimate-hint{margin:8px 2px;color:var(--tx2);font-size:12px}
+.nutrient-edit{margin:4px 0 10px;color:var(--tx2)}
+.tag.registered{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:999px;
+  color:var(--green);background:#e9f6ef;font-size:9px;font-weight:700;vertical-align:1px}
+.ocr-input{margin:9px 0 7px;min-height:118px;resize:vertical;line-height:1.5}
+.nut-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.nutrient-field input{padding:8px}
+.nut-more{border-top:1px solid var(--line);margin:3px 0 10px;padding-top:8px}
+.nut-more summary{padding:5px 0 9px;color:var(--green);font-size:13px;font-weight:700;cursor:pointer}
+
 /* ---- グラフ ---- */
 .chart-wrap{position:relative;width:100%;overflow-x:auto}
 canvas.chart{width:100%;height:190px;display:block}
@@ -190,6 +234,10 @@ canvas.chart{width:100%;height:190px;display:block}
   .btn.sub{background:#2a3038;color:var(--tx)}
   .chip{background:#2a3038}
   .nut-bar{background:#2a3038}
+  .score-group-bar{background:#2a3038}
+  .nut-detail.tappable:active{background:#242a31}
+  .exercise-connect{background:#222c28}
+  .tag.registered{background:#19372a}
   input[type=text],input[type=number],input[type=date],input[type=time],select,textarea{
     background:#1c2026;border-color:var(--line)}
   .tap-btn{background:#1c2026}

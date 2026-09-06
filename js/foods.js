@@ -21,7 +21,7 @@
     vita: ['ビタミンA', 'µg'], vitd: ['ビタミンD', 'µg'], vite: ['ビタミンE', 'mg'],
     vitb1: ['ビタミンB1', 'mg'], vitb2: ['ビタミンB2', 'mg'], niacin: ['ナイアシン', 'mg'],
     vitb6: ['ビタミンB6', 'mg'], vitb12: ['ビタミンB12', 'µg'], folate: ['葉酸', 'µg'],
-    vitc: ['ビタミンC', 'mg']
+    vitc: ['ビタミンC', 'mg'], exercise: ['運動', 'kcal']
   };
 
   /* 日常語 -> 成分表の用語 を補う辞書。
@@ -341,6 +341,52 @@
     return PROD.map[norm(name)] || null;
   }
 
+  /* 商品マスタの「1単位」と記録側の単位が同じでも、袋サイズが違う場合がある。
+     既知のカロリーを物差しにして不足項目だけ補い、極端な差は別商品として拒否する。
+     nutrients は実際の amount 分の値。既存値は一切上書きしない。 */
+  function mergeProduct(name, nutrients, unit, amount, estimatedKeys) {
+    var out = {}, old = nutrients || {};
+    for (var k in old) out[k] = old[k];
+    var p = productFor(name);
+    amount = Number(amount);
+    if (!isFinite(amount) || amount <= 0) amount = 1;
+    if (!p || !p.nut || p.u !== (unit || 'g')) {
+      return { nutrients: out, changed: false, rejected: false, ratio: null, product: p || null };
+    }
+
+    var ratio = null, factor = amount;
+    var knownKcal = out.kcal;
+    var masterKcal = p.nut.kcal;
+    if (typeof knownKcal === 'number' && isFinite(knownKcal) && knownKcal > 0 &&
+        typeof masterKcal === 'number' && isFinite(masterKcal) && masterKcal > 0) {
+      ratio = knownKcal / (masterKcal * amount);
+      // 指示書の倍率表と同じく小数第2位で判定する。116/292 のような
+      // 境界上の同一商品サイズ違いを、浮動小数の端数だけで拒否しない。
+      var judgedRatio = round(ratio, 2);
+      if (judgedRatio < 0.4 || judgedRatio > 2.5) {
+        return { nutrients: out, changed: false, rejected: true, ratio: ratio, product: p };
+      }
+      // 公式資料で指定1回量まで照合済みの強化食品・サプリは、丸められた
+      // 記録kcalにビタミン量まで引きずられないよう、その指定量を優先する。
+      if (!p.fixed && (ratio < 0.8 || ratio > 1.25)) factor *= ratio;
+    }
+
+    estimatedKeys = estimatedKeys || [];
+    var changed = false, appliedKeys = [];
+    for (var key in p.nut) {
+      if (typeof p.nut[key] !== 'number') continue;
+      // 既存の実測値は守る。以前の版で推定した値だけは、より確かな商品マスタで置き換える。
+      if (typeof out[key] === 'number' && estimatedKeys.indexOf(key) === -1) continue;
+      out[key] = round(p.nut[key] * factor, 3);
+      changed = true;
+      appliedKeys.push(key);
+    }
+    return {
+      nutrients: out, changed: changed, rejected: false, ratio: ratio,
+      appliedKeys: appliedKeys, product: p
+    };
+  }
+
   /* ================= 食品名カテゴリ辞書 ================= */
   var CATEGORIES = null, categoryLoading = null;
 
@@ -413,7 +459,7 @@
     load: load, loadCommon: loadCommon, search: search, byId: byId, scale: scale, sum: sum,
     searchCommon: searchCommon, commonById: commonById,
     loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
-    loadProducts: loadProducts, productFor: productFor,
+    loadProducts: loadProducts, productFor: productFor, mergeProduct: mergeProduct,
     loadCategories: loadCategories,
     productCount: function () { return PROD ? PROD.count : 0; },
     groupName: groupName, meta: meta, norm: norm, round: round, sugarOf: sugarOf,

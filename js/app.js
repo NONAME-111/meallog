@@ -20,6 +20,11 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  function version() {
+    var meta = document.querySelector('meta[name="application-version"]');
+    return meta ? meta.getAttribute('content') : '';
+  }
+
   var toastTimer = 0;
   function toast(msg, ms) {
     var t = document.getElementById('toast');
@@ -244,7 +249,7 @@
     esc: esc, toast: toast, openSheet: openSheet, closeSheet: closeSheet,
     pushSheet: pushSheet, backSheet: backSheet, dropSheet: dropSheet,
     reloadSettings: reloadSettings, weightFor: weightFor, targetsFor: targetsFor,
-    dateLabel: dateLabel
+    dateLabel: dateLabel, version: version
   };
 
   if (document.readyState === 'loading') {

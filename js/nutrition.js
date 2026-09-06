@@ -76,6 +76,7 @@
     Object.keys(LIMIT).forEach(function (k) {
       t[k] = { goal: LIMIT[k][sexIdx], kind: 'max' };
     });
+    t.exercise = { goal: Math.max(1, Math.round(settings.exerciseKcalGoal || 200)), kind: 'min' };
     t._bmr = bmr(settings, w);
     t._tdee = tdee(settings, w);
     return t;
@@ -85,7 +86,7 @@
   var WEIGHTS = [
     ['kcal', 20], ['protein', 10], ['fat', 10], ['sugar', 8], ['fiber', 8],
     ['salt', 10], ['satfat', 6], ['ca', 6], ['fe', 6],
-    ['vita', 4], ['vitb1', 4], ['vitb2', 4], ['vitc', 4]
+    ['vita', 4], ['vitb1', 4], ['vitb2', 4], ['vitc', 4], ['exercise', 10]
   ];
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -186,6 +187,12 @@
           fmt(x.intake) + ' / ' + fmt(lim) + ' ' + m[1] + '）。' + overText(x.key)
       });
     });
+
+    var exercise = byKey.exercise;
+    if (exercise && !exercise.excluded && exercise.ratio < 1 && out.length < 4) {
+      out.push({ icon: '🏃', text: '運動は ' + Math.round(exercise.intake) + ' / ' +
+        Math.round(exercise.goal) + ' kcal相当です。歩数や短い運動を少し足すと目標に近づきます。' });
+    }
 
     if (ctx && ctx.hasEntries && out.length < 3) {
       out.push({ icon: '👍', text: 'バランスよく摂れています。この調子で続けましょう。' });
