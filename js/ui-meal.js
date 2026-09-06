@@ -16,6 +16,7 @@
   /* パッケージ表示には載らない栄養素。似た食材から按分して補う対象。 */
   var MICRO = ['chol', 'k', 'ca', 'mg', 'fe', 'zn', 'vita', 'vitd', 'vite',
     'vitb1', 'vitb2', 'niacin', 'vitb6', 'vitb12', 'folate', 'vitc'];
+  var REF_ESTIMATE_KEYS = ['fiber', 'satfat', 'monofat', 'polyfat', 'n3', 'n6'].concat(MICRO);
 
   /* 名前が検索語に当たるか。かなだけで入力されたときは漢字を読み下して照合する。 */
   function nameHit(name, q, kana) {
@@ -118,8 +119,13 @@
     } else {
       items.forEach(function (e) {
         var n = e.nutrients || {};
+        var estimatedPfc = e.est && (e.est.keys || []).some(function (k) {
+          return k === 'protein' || k === 'fat' || k === 'carb';
+        });
         var pfc = hasPfc(n)
-          ? ' ・ P' + N.fmt(n.protein || 0) + ' F' + N.fmt(n.fat || 0) + ' C' + N.fmt(n.carb || 0)
+          ? ' ・ ' + (estimatedPfc ? '約 ' : '') + 'P' + N.fmt(n.protein || 0) +
+            ' F' + N.fmt(n.fat || 0) + ' C' + N.fmt(n.carb || 0) +
+            (estimatedPfc ? ' <span class="muted">（推定）</span>' : '')
           : ' ・ <span class="muted">P— F— C—（栄養素は未登録）</span>';
         h += '<div class="item" data-entry="' + A().esc(e.id) + '">' +
           '<div class="grow"><div class="item-name ellip">' + A().esc(e.name) + '</div>' +
@@ -522,13 +528,27 @@
     var body = A().openSheet('セット', html);
     body.querySelector('#useCombo').addEventListener('click', function () {
       var seq = Date.now();
-      var jobs = (c.items || []).map(function (i, idx) {
-        return S.Entries.put({
-          date: state.date, slot: slot, name: i.name, amount: i.amount, unit: i.unit,
-          nutrients: i.nutrients, ref: i.ref || { type: 'combo', id: c.id }, seq: seq + idx
+      Promise.all((c.items || []).map(function (i) {
+        return estimateNutrients(i.name, i.nutrients || {}, {
+          unit: i.unit, est: i.est || null
+        }, i.amount).then(function (result) {
+          var copy = {};
+          for (var key in i) copy[key] = i[key];
+          copy.nutrients = result.nutrients;
+          copy.est = result.est || undefined;
+          return copy;
         });
-      });
-      Promise.all(jobs).then(function () {
+      })).then(function (items) {
+        c.items = items;
+        var records = items.map(function (i, idx) {
+          return {
+            date: state.date, slot: slot, name: i.name, amount: i.amount, unit: i.unit,
+            nutrients: i.nutrients, est: i.est,
+            ref: i.ref || { type: 'combo', id: c.id }, seq: seq + idx
+          };
+        });
+        return Promise.all([S.Entries.putMany(records), S.Combos.put(c)]);
+      }).then(function () {
         return S.Combos.touch(c.id);
       }).then(function () {
         A().backSheet();
@@ -713,14 +733,14 @@
           if (typeof pm.nut[k2] === 'number' && typeof merged[k2] !== 'number') merged[k2] = pm.nut[k2];
         }
         m = { name: m.name, basis: m.basis, servingLabel: m.servingLabel,
-          brand: m.brand, id: m.id, nutrients: merged };
+          brand: m.brand, id: m.id, nutrients: merged, est: m.est };
       }
     }
     return {
       name: m.name, basis: m.basis || '100g', per: m.nutrients,
       unit: m.basis === 'serving' ? (m.servingLabel || '食') : 'g',
       defaultAmount: m.basis === 'serving' ? 1 : 100,
-      ref: { type: 'my', id: m.id }, note: m.brand || ''
+      ref: { type: 'my', id: m.id }, note: m.brand || '', est: m.est || null
     };
   }
   function fromEntry(e) {
@@ -742,8 +762,21 @@
     }
     return {
       name: e.name, basis: (e.unit === 'g') ? '100g' : 'serving', per: per,
-      unit: e.unit || 'g', defaultAmount: amount, ref: e.ref || { type: 'manual' }, note: ''
+      unit: e.unit || 'g', defaultAmount: amount, ref: e.ref || { type: 'manual' },
+      note: '', est: e.est || null, seq: e.seq
     };
+  }
+
+  function estimateNutrients(name, nutrients, pick, amount) {
+    if (!global.Estimate) return Promise.resolve({ nutrients: nutrients, est: pick.est || null });
+    return global.Estimate.fill(name, nutrients, {
+      unit: pick.unit, amount: amount, est: pick.est || null
+    }).then(function (filled) {
+      return filled || { nutrients: nutrients, est: pick.est || null };
+    }).catch(function () {
+      // 推定用データが読めない場合も、利用者が入力した値はそのまま保存する。
+      return { nutrients: nutrients, est: pick.est || null };
+    });
   }
 
   /* ---------------- 数量入力シート ---------------- */
@@ -801,7 +834,8 @@
         (isG ? Math.round(c.amount) + ' g' : c.amount + ' ' + A().esc(pick.unit)) + '</span></div>' +
         '<div class="small muted" style="margin-top:6px">たんぱく質 ' + N.fmt(n.protein || 0) +
         'g ・ 脂質 ' + N.fmt(n.fat || 0) + 'g ・ 炭水化物 ' + N.fmt(n.carb || 0) +
-        'g ・ 食塩 ' + N.fmt(n.salt || 0) + 'g</div>';
+        'g ・ 食塩 ' + N.fmt(n.salt || 0) + 'g' +
+        (pick.est && pick.est.keys && pick.est.keys.length ? '（推定を含む）' : '') + '</div>';
     }
 
     amt.addEventListener('input', draw);
@@ -824,28 +858,39 @@
       });
     }
 
-    body.querySelector('#save').addEventListener('click', function () {
+    var saveBtn = body.querySelector('#save');
+    saveBtn.addEventListener('click', function () {
       var c = calc();
       if (!c.amount) { A().toast('数量を入力してください'); return; }
-      // セットの中身を選んでいるときは記録せず、呼び出し元へ1品として返す
-      if (onPick) {
-        onPick({
-          name: pick.name, amount: c.amount, unit: pick.unit,
-          nutrients: c.n, ref: pick.ref
+      saveBtn.disabled = true;
+      var oldText = saveBtn.textContent;
+      saveBtn.textContent = '栄養素を確認中…';
+      estimateNutrients(pick.name, c.n, pick, c.amount).then(function (result) {
+        // セットの中身を選んでいるときは記録せず、呼び出し元へ1品として返す
+        if (onPick) {
+          onPick({
+            name: pick.name, amount: c.amount, unit: pick.unit,
+            nutrients: result.nutrients, est: result.est, ref: pick.ref
+          });
+          return null;
+        }
+        var rec = {
+          id: existingId || undefined, seq: pick.seq,
+          date: state.date, slot: slot, name: pick.name,
+          amount: c.amount, unit: pick.unit, nutrients: result.nutrients,
+          est: result.est || undefined, ref: pick.ref
+        };
+        return S.Entries.put(rec).then(function () {
+          if (pick.ref && pick.ref.type === 'my') S.MyFoods.touch(pick.ref.id);
+          A().render();
+          // 続けて何品も足せるよう、閉じずに1つ前(検索一覧)へ戻る
+          if (existingId) { A().closeSheet(); A().toast('更新しました'); }
+          else { A().backSheet(); A().toast(pick.name + ' を記録しました'); }
         });
-        return;
-      }
-      var rec = {
-        id: existingId || undefined,
-        date: state.date, slot: slot, name: pick.name,
-        amount: c.amount, unit: pick.unit, nutrients: c.n, ref: pick.ref
-      };
-      S.Entries.put(rec).then(function () {
-        if (pick.ref && pick.ref.type === 'my') S.MyFoods.touch(pick.ref.id);
-        A().render();
-        // 続けて何品も足せるよう、閉じずに1つ前(検索一覧)へ戻る
-        if (existingId) { A().closeSheet(); A().toast('更新しました'); }
-        else { A().backSheet(); A().toast(pick.name + ' を記録しました'); }
+      }).catch(function (err) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = oldText;
+        A().toast('保存できませんでした: ' + ((err && err.message) || err));
       });
     });
     var delBtn = body.querySelector('#del');
@@ -890,7 +935,7 @@
         '<div class="grid2">' + num('mP', 'たんぱく質 (g)', preset.protein) + num('mF', '脂質 (g)', preset.fat) + '</div>' +
         '<div class="grid2">' + num('mC', '炭水化物 (g)', preset.carb) + num('mSalt', '食塩相当量 (g)', preset.salt) + '</div>' +
         '<div class="grid2">' + num('mFib', '食物繊維 (g)', preset.fiber) + num('mSat', '飽和脂肪酸 (g)', preset.satfat) + '</div>' +
-        '<div class="tiny muted">パッケージの栄養成分表示をそのまま入力してください。空欄は0として扱います。</div>' +
+        '<div class="tiny muted">パッケージの栄養成分表示をそのまま入力してください。空欄は「不明」として扱います。</div>' +
       '</div>' +
       '<div class="card"><h3>その他の栄養素（任意）</h3>' +
         '<div class="small muted">パッケージの表示にはビタミン・ミネラルが載っていません。' +
@@ -987,21 +1032,36 @@
       };
       // 似た食材が選ばれていれば、重さに応じてビタミン・ミネラルを按分して足す
       var refG = (basis.value === '100g') ? 100 : refGrams;
-      if (refFood && refG > 0) {
-        MICRO.forEach(function (k) {
+      var manualEstKeys = [];
+      if (refFood && refG > 0 && refG <= 1500) {
+        REF_ESTIMATE_KEYS.forEach(function (k) {
           var v2 = refFood[k];
           if (typeof v2 !== 'number' || typeof nut[k] === 'number') return;
           nut[k] = Math.round(v2 * refG / 100 * 1000) / 1000;
+          manualEstKeys.push(k);
         });
       }
-      var rec = {
-        name: name, brand: body.querySelector('#mBrand').value.trim(),
-        basis: basis.value, servingLabel: body.querySelector('#mServ').value.trim() || '個',
-        barcode: preset.barcode ? String(preset.barcode) : '',
-        nutrients: nut,
-        refFood: refFood ? refFood.id : '', refGrams: refG || null
-      };
-      S.MyFoods.put(rec).then(function (saved) {
+      var manualEst = manualEstKeys.length ? {
+        keys: manualEstKeys, conf: 'high', ref: refFood.id,
+        cat: '手動で選んだ似た食材', method: 'manual-reference', v: 1
+      } : null;
+      var unit = basis.value === '100g' ? 'g' : (body.querySelector('#mServ').value.trim() || '個');
+      var amount = basis.value === '100g' ? 100 : 1;
+      var estimateJob = global.Estimate
+        ? global.Estimate.fill(name, nut, { unit: unit, amount: amount, est: manualEst })
+        : Promise.resolve(null);
+      estimateJob = estimateJob.catch(function () { return null; });
+      estimateJob.then(function (filled) {
+        var rec = {
+          name: name, brand: body.querySelector('#mBrand').value.trim(),
+          basis: basis.value, servingLabel: body.querySelector('#mServ').value.trim() || '個',
+          barcode: preset.barcode ? String(preset.barcode) : '',
+          nutrients: filled ? filled.nutrients : nut,
+          est: (filled && filled.est) || manualEst || undefined,
+          refFood: refFood ? refFood.id : '', refGrams: refG || null
+        };
+        return S.MyFoods.put(rec);
+      }).then(function (saved) {
         A().toast('マイ食品に保存しました');
         // 既存の記録に栄養素を足しに来た場合は、同じ記録を更新する(増やさない)
         openAmount(state, slot, fromMyFood(saved), existingId);
@@ -1023,7 +1083,7 @@
   }
   function v(body, sel) {
     var x = parseFloat(body.querySelector(sel).value);
-    return isFinite(x) ? x : 0;
+    return isFinite(x) ? x : null;
   }
 
   /* 成分表から1品目だけ選ぶ(栄養素の補完元にするため。記録はしない) */

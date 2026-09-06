@@ -104,22 +104,37 @@
     return rr <= 1 ? 1 : clamp(1 - (rr - 1) * 1.5, 0, 1);
   }
 
-  /* totals: 実摂取量(Foods.sum の結果)、tg: targets() の結果 */
-  function score(totals, tg) {
-    var pts = 0, detail = [];
+  /* totals: 実摂取量、ctx.coverage: 栄養素ごとの摂取カロリーカバー率 */
+  function score(totals, tg, ctx) {
+    ctx = ctx || {};
+    var rawPoints = 0, includedWeight = 0, detail = [], excludedCount = 0;
     WEIGHTS.forEach(function (pair) {
       var key = pair[0], w = pair[1];
       var t = tg[key];
       if (!t) return;
-      var intake = totals[key] || 0;
-      var s = scoreOne(t.kind, intake, t.goal, t.max);
-      pts += s * w;
+      var hasValue = typeof totals[key] === 'number' && isFinite(totals[key]);
+      var coverage = ctx.coverage && typeof ctx.coverage[key] === 'number'
+        ? ctx.coverage[key] : (hasValue ? 1 : 0);
+      var estimated = ctx.estimated && typeof ctx.estimated[key] === 'number'
+        ? ctx.estimated[key] : 0;
+      var excluded = !hasValue || coverage < 0.60;
+      var intake = hasValue ? totals[key] : null;
+      var s = excluded ? null : scoreOne(t.kind, intake, t.goal, t.max);
+      if (excluded) excludedCount++;
+      else { rawPoints += s * w; includedWeight += w; }
       detail.push({
         key: key, intake: intake, goal: t.goal, max: t.max, kind: t.kind,
-        ratio: t.goal ? intake / t.goal : 0, sc: s, weight: w
+        ratio: (!excluded && t.goal) ? intake / t.goal : null, sc: s, weight: w,
+        coverage: coverage, estimated: estimated, excluded: excluded
       });
     });
-    return { total: Math.round(pts), detail: detail };
+    var insufficient = excludedCount * 2 >= detail.length || includedWeight <= 0;
+    var total = insufficient ? null : Math.round(rawPoints * 100 / includedWeight);
+    return {
+      total: total, detail: detail, insufficient: insufficient,
+      excludedCount: excludedCount,
+      hasEstimated: detail.some(function (d) { return !d.excluded && d.estimated > 0; })
+    };
   }
 
   /* ---- コメント生成 ---- */
@@ -129,8 +144,13 @@
     var byKey = {};
     d.forEach(function (x) { byKey[x.key] = x; });
 
+    if (sc.insufficient && ctx && ctx.hasEntries) {
+      out.push({ icon: '📝', text: '栄養データが足りないため、今日は点数を出していません。記録の栄養素を補うと採点できます。' });
+      return out;
+    }
+
     var e = byKey.kcal;
-    if (e) {
+    if (e && !e.excluded) {
       if (e.intake === 0) out.push({ icon: '📝', text: 'まだ記録がありません。食べたものを登録すると採点できます。' });
       else if (e.ratio < 0.7) out.push({ icon: '⚠️', text: '摂取カロリーが目標より大きく少ないです（' + Math.round(e.intake) + ' / ' + e.goal + ' kcal）。記録漏れが無いか確認してください。極端な不足は筋肉量の低下を招きます。' });
       else if (e.ratio > 1.15) out.push({ icon: '🔥', text: '目標より ' + Math.round(e.intake - e.goal) + ' kcal 多く摂っています。次の食事か翌日で調整しましょう。' });
@@ -139,26 +159,31 @@
 
     // 不足しているもの(比率の低い順)
     var lacks = d.filter(function (x) {
-      return x.kind === 'min' && x.ratio < 0.8 && (ctx && ctx.hasEntries);
+      return !x.excluded && x.kind === 'min' && x.ratio < 0.8 && (ctx && ctx.hasEntries);
     }).sort(function (a, b) { return a.ratio - b.ratio; }).slice(0, 3);
     lacks.forEach(function (x) {
       var m = global.Foods.meta(x.key);
       out.push({
         icon: '🥬',
-        text: m[0] + 'が不足しています（' + fmt(x.intake) + ' / ' + fmt(x.goal) + ' ' + m[1] + '、達成率' + Math.round(x.ratio * 100) + '%）。' + suggestText(x.key)
+        text: (x.estimated > 0 ? '推定を含む目安では、' : '') + m[0] +
+          (x.estimated > 0 ? 'が不足している可能性があります（' : 'が不足しています（') +
+          fmt(x.intake) + ' / ' + fmt(x.goal) + ' ' + m[1] + '、達成率' +
+          Math.round(x.ratio * 100) + '%）。' + suggestText(x.key)
       });
     });
 
     // 摂りすぎているもの
     var overs = d.filter(function (x) {
-      return x.kind === 'max' && x.intake > (x.max || x.goal);
+      return !x.excluded && x.kind === 'max' && x.intake > (x.max || x.goal);
     }).sort(function (a, b) { return b.ratio - a.ratio; }).slice(0, 3);
     overs.forEach(function (x) {
       var m = global.Foods.meta(x.key);
       var lim = x.max || x.goal;
       out.push({
         icon: '🧂',
-        text: m[0] + 'が目安を超えています（' + fmt(x.intake) + ' / ' + fmt(lim) + ' ' + m[1] + '）。' + overText(x.key)
+        text: (x.estimated > 0 ? '推定を含む目安では、' : '') + m[0] +
+          (x.estimated > 0 ? 'が目安を超えている可能性があります（' : 'が目安を超えています（') +
+          fmt(x.intake) + ' / ' + fmt(lim) + ' ' + m[1] + '）。' + overText(x.key)
       });
     });
 

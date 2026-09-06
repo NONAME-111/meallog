@@ -224,8 +224,8 @@
   }
 
   function sugarOf(n) {
-    if (n.carb == null) return null;
-    return round(n.carb - (n.fiber || 0), 2);
+    if (n.carb == null || n.fiber == null) return null;
+    return round(Math.max(0, n.carb - n.fiber), 2);
   }
 
   function round(v, d) {
@@ -341,6 +341,27 @@
     return PROD.map[norm(name)] || null;
   }
 
+  /* ================= 食品名カテゴリ辞書 ================= */
+  var CATEGORIES = null, categoryLoading = null;
+
+  function loadCategories() {
+    if (CATEGORIES) return Promise.resolve(CATEGORIES);
+    if (categoryLoading) return categoryLoading;
+    categoryLoading = fetch('data/food-categories.json')
+      .then(function (r) { return r.ok ? r.json() : { schema: 1, rules: [], excludes: [] }; })
+      .then(function (j) {
+        CATEGORIES = j || { schema: 1, rules: [], excludes: [] };
+        CATEGORIES.rules = CATEGORIES.rules || [];
+        CATEGORIES.excludes = CATEGORIES.excludes || [];
+        return CATEGORIES;
+      })
+      .catch(function () {
+        CATEGORIES = { schema: 1, rules: [], excludes: [] };
+        return CATEGORIES;
+      });
+    return categoryLoading;
+  }
+
   /* ---- 「食材」(普段の呼び名 + よみ + 1食分の目安) ---- */
   function commonIndex() {
     return loadCommon().then(function (data) {
@@ -393,6 +414,7 @@
     searchCommon: searchCommon, commonById: commonById,
     loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
     loadProducts: loadProducts, productFor: productFor,
+    loadCategories: loadCategories,
     productCount: function () { return PROD ? PROD.count : 0; },
     groupName: groupName, meta: meta, norm: norm, round: round, sugarOf: sugarOf,
     KEYS: NUTRIENT_KEYS, META: NUTRIENT_META,

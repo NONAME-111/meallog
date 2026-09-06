@@ -177,6 +177,20 @@
         return reqp(s.put(rec));
       }).then(function () { return rec; });
     },
+    putMany: function (records) {
+      records = records || [];
+      var base = Date.now();
+      records.forEach(function (rec, i) {
+        if (!rec.id) rec.id = uid();
+        if (rec.seq == null) rec.seq = base + i;
+      });
+      if (!records.length) return Promise.resolve(records);
+      invalidate();
+      return run('entries', 'readwrite', function (s) {
+        records.forEach(function (rec) { s.put(rec); });
+        return records;
+      });
+    },
     remove: function (id) {
       invalidate();
       return run('entries', 'readwrite', function (s) { return reqp(s.delete(id)); });
@@ -341,6 +355,41 @@
      食品側に値が無い項目だけ取り込みデータ(あすけん等)で補う。 */
   function isImported(e) { return !!(e.ref && e.ref.type === 'asken'); }
 
+  function coverageParts(entries) {
+    var F = global.Foods;
+    var keys = F.KEYS.concat(['sugar']);
+    var denominator = 0, known = {}, estimated = {};
+    (entries || []).forEach(function (e) {
+      var n = e.nutrients || {};
+      var kcal = (typeof n.kcal === 'number' && isFinite(n.kcal) && n.kcal > 0) ? n.kcal : 0;
+      if (!kcal) return;
+      denominator += kcal;
+      var estKeys = (e.est && e.est.keys) || [];
+      keys.forEach(function (key) {
+        var present = typeof n[key] === 'number' && isFinite(n[key]);
+        if (key === 'sugar' && !present) present = F.sugarOf(n) != null;
+        if (!present) return;
+        known[key] = (known[key] || 0) + kcal;
+        if (estKeys.indexOf(key) !== -1 ||
+            (key === 'sugar' && (estKeys.indexOf('carb') !== -1 || estKeys.indexOf('fiber') !== -1))) {
+          estimated[key] = (estimated[key] || 0) + kcal;
+        }
+      });
+    });
+    return { denominator: denominator, known: known, estimated: estimated };
+  }
+
+  function coverageResult(parts, denominator) {
+    var F = global.Foods;
+    var coverage = {}, estimated = {};
+    F.KEYS.concat(['sugar']).forEach(function (key) {
+      coverage[key] = denominator > 0 ? Math.min(1, (parts.known[key] || 0) / denominator) : 0;
+      estimated[key] = denominator > 0 ? Math.min(1, (parts.estimated[key] || 0) / denominator) : 0;
+    });
+    if (denominator > 0) coverage.kcal = 1;
+    return { coverage: coverage, estimated: estimated };
+  }
+
   function dayTotals(date, entries) {
     // 「食べなかった」印は栄養値を持たないので、集計の判定から外す
     entries = (entries || []).filter(notSkip);
@@ -352,8 +401,11 @@
     return Daily.get(date).then(function (imp) {
       var usable = imp && imp.nutrients && (fromImport.length > 0 || entries.length === 0);
       if (!usable) {
-        sumAll.sugar = F.sugarOf(sumAll);
-        return { totals: sumAll, imported: null };
+        var sugar = F.sugarOf(sumAll);
+        if (sugar != null) sumAll.sugar = sugar; else delete sumAll.sugar;
+        var regular = coverageParts(entries);
+        var rc = coverageResult(regular, regular.denominator);
+        return { totals: sumAll, imported: null, coverage: rc.coverage, estimated: rc.estimated };
       }
       // カロリーは食品ごとに持っているのでそのまま。それ以外は取り込み元の日次集計を使い、
       // 自分で足した食品(成分表など)の分だけ上乗せする。
@@ -367,8 +419,23 @@
         out[key] = F.round(v + (ownSum[key] || 0), 2);
       }
       if (!out.kcal && imp.nutrients.kcal) out.kcal = imp.nutrients.kcal;
-      out.sugar = F.sugarOf(out);
-      return { totals: out, imported: imp };
+      var sugar2 = F.sugarOf(out);
+      if (sugar2 != null) out.sugar = sugar2; else delete out.sugar;
+
+      // 取り込み元の日次集計は実測集計として扱い、自分で追加した食品だけ個別に判定する。
+      var ownCoverage = coverageParts(own);
+      var totalKcal = (typeof out.kcal === 'number' && out.kcal > 0) ? out.kcal : 0;
+      var importedKcal = Math.max(0, totalKcal - ownCoverage.denominator);
+      var parts = { denominator: totalKcal, known: {}, estimated: {} };
+      F.KEYS.concat(['sugar']).forEach(function (key) {
+        var impKnown = key === 'sugar'
+          ? (typeof imp.nutrients.carb === 'number' && typeof imp.nutrients.fiber === 'number')
+          : (typeof imp.nutrients[key] === 'number');
+        parts.known[key] = (ownCoverage.known[key] || 0) + (impKnown ? importedKcal : 0);
+        parts.estimated[key] = ownCoverage.estimated[key] || 0;
+      });
+      var ic = coverageResult(parts, totalKcal);
+      return { totals: out, imported: imp, coverage: ic.coverage, estimated: ic.estimated };
     });
   }
 
@@ -416,6 +483,20 @@
       rec.usedAt = rec.usedAt || Date.now();
       return run('myfoods', 'readwrite', function (s) { return reqp(s.put(rec)); })
         .then(function () { return rec; });
+    },
+    putMany: function (records) {
+      records = records || [];
+      var base = Date.now();
+      records.forEach(function (rec, i) {
+        if (!rec.id) rec.id = uid();
+        if (rec.barcode == null) rec.barcode = '';
+        rec.usedAt = rec.usedAt || base + i;
+      });
+      if (!records.length) return Promise.resolve(records);
+      return run('myfoods', 'readwrite', function (s) {
+        records.forEach(function (rec) { s.put(rec); });
+        return records;
+      });
     },
     touch: function (id) {
       return MyFoods.get(id).then(function (rec) {

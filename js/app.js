@@ -212,6 +212,7 @@
       // かな検索用の読み表と、商品ごとの栄養マスタ(どちらも無くても動く)
       global.Foods.loadYomi();
       global.Foods.loadProducts();
+      global.Estimate.load().catch(function (e) { void e; });
       // 取り込んだ過去日の未記録を「食べなかった」で一度だけ埋める
       if (!st.skipBackfilled) {
         S.backfillSkipped().then(function (res) {

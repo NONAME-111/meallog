@@ -112,11 +112,11 @@
       '<button class="btn line wide" id="btnCsv">食品データをCSVで取り込む</button>' +
       '<input type="file" id="fileCsv" accept=".csv,text/csv" hidden>' +
       '<hr class="sep">' +
-      '<div class="small muted" style="margin-bottom:8px">あすけんから取り込んだ記録は' +
-      'カロリーしか持っていません。商品ごとの栄養データベースと突き合わせて、' +
-      'たんぱく質・脂質・炭水化物などを後から補えます。' +
-      '（あすけんの日次集計がある過去の日はそのままにします）</div>' +
+      '<div class="small muted" style="margin-bottom:8px">カロリーしかない過去の記録にも、' +
+      '商品データと日本食品標準成分表から、欠けているPFC・ビタミン・ミネラルを補えます。' +
+      '実測値は変更せず、推定した項目には印を付けます。件数が多いと数十秒かかります。</div>' +
       '<button class="btn line wide" id="btnEnrich">記録に栄養素を補う</button>' +
+      '<div class="tiny muted" id="enrichProgress" role="status" hidden style="margin-top:8px"></div>' +
       '<button class="btn sub wide" id="btnWipe" style="margin-top:14px;color:var(--red)">すべての記録を消す</button>' +
       '</div>';
   }
@@ -252,81 +252,108 @@
   }
 
   /* ---------------- 記録に栄養素を補う ---------------- */
-  function hasPfc(n) {
-    n = n || {};
-    return typeof n.protein === 'number' || typeof n.fat === 'number' ||
-      typeof n.carb === 'number';
-  }
-
   function doEnrich() {
-    A().toast('突き合わせています…');
+    var button = document.getElementById('btnEnrich');
+    var progress = document.getElementById('enrichProgress');
+    if (button) { button.disabled = true; button.textContent = '補完しています…'; }
+    if (progress) { progress.hidden = false; progress.textContent = '食品データを準備しています…'; }
+    A().toast('栄養素の補完を始めます…');
+
+    function setProgress(done, total, label) {
+      if (!progress) return;
+      progress.textContent = label + ' ' + done.toLocaleString() + ' / ' + total.toLocaleString() + '件';
+    }
+
+    function nextFrame() {
+      return new Promise(function (resolve) { setTimeout(resolve, 0); });
+    }
+
+    function mergeProduct(e, isMyFood) {
+      var p = global.Foods.productFor(e.name);
+      if (!p || !p.nut) return false;
+      var unit = isMyFood
+        ? (e.basis === 'serving' ? (e.servingLabel || '食') : 'g')
+        : (e.unit || 'g');
+      if (!isMyFood && p.u !== unit) return false;
+      var amount = isMyFood ? 1 : (e.amount || 1);
+      var changed = false, nut = {}, old = e.nutrients || {};
+      for (var k in old) nut[k] = old[k];
+      for (var key in p.nut) {
+        if (typeof p.nut[key] !== 'number' || typeof nut[key] === 'number') continue;
+        nut[key] = Math.round(p.nut[key] * amount * 1000) / 1000;
+        changed = true;
+      }
+      if (changed) e.nutrients = nut;
+      return changed;
+    }
+
+    function enrichRecord(e, isMyFood) {
+      var changed = mergeProduct(e, isMyFood);
+      var unit = isMyFood
+        ? (e.basis === 'serving' ? (e.servingLabel || '食') : 'g')
+        : (e.unit || 'g');
+      var amount = isMyFood ? (e.basis === '100g' ? 100 : 1) : (e.amount || 1);
+      return global.Estimate.fill(e.name, e.nutrients || {}, {
+        unit: unit, amount: amount, est: e.est || null
+      }).then(function (filled) {
+        if (filled) {
+          e.nutrients = filled.nutrients;
+          e.est = filled.est;
+          changed = true;
+        }
+        return changed;
+      });
+    }
+
+    function processBatches(records, isMyFood, label, writeBatch) {
+      var total = records.length, index = 0, changed = 0;
+      function oneBatch() {
+        if (index >= total) return Promise.resolve(changed);
+        var slice = records.slice(index, index + 100);
+        return Promise.all(slice.map(function (rec) {
+          return enrichRecord(rec, isMyFood).then(function (didChange) {
+            if (didChange) changed++;
+            return didChange ? rec : null;
+          });
+        })).then(function (rows) {
+          var updates = rows.filter(Boolean);
+          return updates.length ? writeBatch(updates) : null;
+        }).then(function () {
+          index += slice.length;
+          setProgress(index, total, label);
+          return nextFrame().then(oneBatch);
+        });
+      }
+      return oneBatch();
+    }
+
     Promise.all([
       global.Foods.loadProducts(),
       S.Entries.range('2000-01-01', '2100-12-31'),
-      S.Daily.all(),
-      S.MyFoods.all()
+      S.MyFoods.all(),
+      global.Estimate.load()
     ]).then(function (r) {
-      var imported = {};
-      r[2].forEach(function (d) { imported[d.date] = 1; });
-
-      // あすけんの日次集計がある日は、そちらで補えているので触らない。
-      // PFCが入っていてもビタミン・ミネラルが抜けている記録があるので、
-      // 「マスタに在って記録に無い項目」が1つでもあれば対象にする。
-      function needsFill(e) {
-        var m = global.Foods.productFor(e.name);
-        if (!m || !m.nut || m.u !== (e.unit || 'g')) return false;
-        for (var k in m.nut) {
-          if (typeof m.nut[k] === 'number' && typeof (e.nutrients || {})[k] !== 'number') return true;
-        }
-        return false;
-      }
-      var targets = r[1].filter(function (e) {
-        return S.notSkip(e) && !imported[e.date] && needsFill(e);
+      var entries = r[1].filter(S.notSkip), myfoods = r[2];
+      return processBatches(entries, false, '食事記録', function (rows) {
+        return S.Entries.putMany(rows);
+      }).then(function (entryFilled) {
+        return processBatches(myfoods, true, 'マイ食品', function (rows) {
+          return S.MyFoods.putMany(rows);
+        }).then(function (myFilled) {
+          return { entries: entryFilled, myfoods: myFilled };
+        });
       });
-      var entryJobs = [], filled = 0;
-      targets.forEach(function (e) {
-        var m = global.Foods.productFor(e.name);
-        if (!m || !m.nut || m.u !== (e.unit || 'g')) return;
-        void hasPfc;
-        var amount = e.amount || 1;
-        var nut = {};
-        for (var k in (e.nutrients || {})) nut[k] = e.nutrients[k];
-        for (var k2 in m.nut) {
-          // 記録済みのカロリーは実績なので上書きしない
-          if (typeof m.nut[k2] === 'number' && typeof nut[k2] !== 'number') {
-            nut[k2] = Math.round(m.nut[k2] * amount * 1000) / 1000;
-          }
-        }
-        e.nutrients = nut;
-        filled++;
-        entryJobs.push(S.Entries.put(e));
-      });
-
-      // マイ食品にも入れておくと、次に選んだときから栄養素が付く
-      var myFilled = 0;
-      r[3].forEach(function (m) {
-        var p = global.Foods.productFor(m.name);
-        if (!p || !p.nut) return;
-        var nut2 = {};
-        for (var k3 in (m.nutrients || {})) nut2[k3] = m.nutrients[k3];
-        for (var k4 in p.nut) {
-          if (typeof p.nut[k4] === 'number' && typeof nut2[k4] !== 'number') nut2[k4] = p.nut[k4];
-        }
-        m.nutrients = nut2;
-        myFilled++;
-        entryJobs.push(S.MyFoods.put(m));
-      });
-
-      if (!entryJobs.length) {
-        A().toast('補える記録はありませんでした（対象 ' + targets.length + ' 件）', 3200);
-        return null;
-      }
-      return Promise.all(entryJobs).then(function () {
-        A().toast('記録 ' + filled + ' 件、マイ食品 ' + myFilled + ' 件に栄養素を補いました', 3600);
-        A().render();
-      });
+    }).then(function (result) {
+      if (!result) return;
+      if (progress) progress.textContent = '完了: 食事記録 ' + result.entries.toLocaleString() +
+        '件、マイ食品 ' + result.myfoods.toLocaleString() + '件を補完しました。';
+      A().toast('栄養素の補完が完了しました', 3600);
+      A().render();
     }).catch(function (err) {
+      if (progress) progress.textContent = '失敗: ' + ((err && err.message) || err);
       A().toast('失敗しました: ' + ((err && err.message) || err));
+    }).then(function () {
+      if (button) { button.disabled = false; button.textContent = '記録に栄養素を補う'; }
     });
   }
 
