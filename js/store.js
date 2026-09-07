@@ -540,6 +540,7 @@
     ],
     toiletTypes: ['小'],
     toiletMigrated: 0,
+    exerciseGoal322Migrated: 0, // 旧既定値200kcalを322kcalへ移した版
     lastTab: 'meal',
     lastAddSrc: 'used',       // 追加シートで最後に見ていた区分
     lastHistSlot: '',         // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)
@@ -615,6 +616,18 @@
     });
   }
 
+  // v13より前の既定値200kcalだけを322kcalへ移す。利用者が自分で設定した
+  // 200以外の値は維持し、移行後に200へ戻しても再変更しない。
+  function migrateExerciseGoal() {
+    return Settings.get().then(function (st) {
+      if (st.exerciseGoal322Migrated) return st;
+      return Settings.save({
+        exerciseKcalGoal: st.exerciseKcalGoal === 200 ? 322 : st.exerciseKcalGoal,
+        exerciseGoal322Migrated: 1
+      });
+    });
+  }
+
   /* ---------------- 全データ書き出し/取り込み ---------------- */
   function exportAll() {
     return Promise.all([
@@ -666,7 +679,8 @@
     Entries: Entries, Body: Body, Exercise: Exercise, MyFoods: MyFoods,
     Settings: Settings, Daily: Daily, Combos: Combos, dayTotals: dayTotals,
     isSkip: isSkip, notSkip: notSkip, backfillSkipped: backfillSkipped,
-    exportAll: exportAll, importAll: importAll, wipeAll: wipeAll, migrateToilet: migrateToilet,
+    exportAll: exportAll, importAll: importAll, wipeAll: wipeAll,
+    migrateToilet: migrateToilet, migrateExerciseGoal: migrateExerciseGoal,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

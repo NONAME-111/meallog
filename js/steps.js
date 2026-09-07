@@ -40,15 +40,27 @@
   function openImport(initial) {
     var A = global.App;
     var body = A.openSheet('歩数を取り込む',
-      '<p class="small">Webアプリからヘルスケアを直接読めないため、Appleのショートカットで歩数をコピーして貼り付けます。同じ日の歩数は最新の合計に置き換わります。</p>' +
-      '<ol class="step-guide"><li>iPhoneの「ショートカット」で、対象日のヘルスケア歩数を合計します</li>' +
-      '<li><code>2026-09-05:8432</code> の形でクリップボードへコピーします</li>' +
-      '<li>下の欄へ貼り付けて「取り込む」を押します</li></ol>' +
+      '<div class="step-method"><b>ヘルスケアの「書き出す」は使いません</b>' +
+      '<p class="small">いちばん簡単なのは、ヘルスケアに表示された歩数をカラダ画面の歩数欄へ直接入力する方法です。</p>' +
+      '<ol class="step-guide"><li>ヘルスケアを開き、右下の「検索」→「アクティビティ」→「歩数」を開く</li>' +
+      '<li>上部を「日」にして、今日の合計歩数を確認する</li>' +
+      '<li>この画面を閉じ、カラダ画面の「歩数」欄へ数字だけ入力する</li></ol></div>' +
+      '<details class="step-shortcut"><summary>ショートカットでコピーする設定手順</summary>' +
+      '<p class="small">Webアプリはヘルスケアを直接読めないため、次のアクションを上から順に追加します。iOSにより名称が少し違う場合があります。</p>' +
+      '<ol class="step-guide"><li>「ショートカット」アプリで右上の＋を押す</li>' +
+      '<li>「ヘルスケアサンプルを検索」を追加し、種類を「歩数」、開始日を「今日」にする</li>' +
+      '<li>「ヘルスケアサンプルの詳細を取得」を追加し、詳細を「値」にする</li>' +
+      '<li>「統計を計算」を追加し、「合計」を選ぶ</li>' +
+      '<li>「現在の日付」→「日付をフォーマット」を追加し、カスタム形式を <code>yyyy-MM-dd</code> にする</li>' +
+      '<li>「テキスト」を追加し、日付と合計の変数を <code>日付:歩数</code> の順で置く</li>' +
+      '<li>「クリップボードにコピー」を追加して実行し、下の欄へ貼り付ける</li></ol>' +
+      '<p class="tiny muted">例: <code>2026-09-07:8432</code>。iPhoneとApple Watchの値が重複する場合は、検索条件で記録元を1つに絞るか、上の直接入力を使ってください。</p>' +
+      '<p class="tiny"><a href="https://support.apple.com/ja-jp/guide/shortcuts/apd3c845e881/ios" target="_blank" rel="noopener">Apple公式: 検索アクションの使い方</a></p></details>' +
       '<label class="fld"><span>日付と歩数</span><textarea id="stepsText" rows="5" placeholder="2026-09-05:8432&#10;2026-09-06:7210">' +
       A.esc(initial || '') + '</textarea></label>' +
       '<p class="small muted" id="stepsPreview" aria-live="polite"></p>' +
       '<button class="btn wide" id="stepsSave" disabled>取り込む</button>' +
-      '<p class="tiny muted">いつも記録しているホーム画面のミールログで操作してください。</p>');
+      '<p class="tiny muted">複数日を一度に貼り付けられます。同じ日の歩数は最新の合計に置き換わります。いつも記録しているホーム画面のミールログで操作してください。</p>');
     var input = body.querySelector('#stepsText'), button = body.querySelector('#stepsSave');
     function preview() {
       try {

@@ -200,7 +200,9 @@
       render();
     });
 
-    S.migrateToilet().then(reloadSettings).then(function (st) {
+    S.migrateToilet().then(function () {
+      return S.migrateExerciseGoal();
+    }).then(reloadSettings).then(function (st) {
       state.tab = st.lastTab || 'meal';
       Array.prototype.forEach.call(document.querySelectorAll('#tabbar .tab'), function (b) {
         b.classList.toggle('is-active', b.dataset.tab === state.tab);

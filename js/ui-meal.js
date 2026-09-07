@@ -46,24 +46,29 @@
       // PFCが0のままになるので、その理由を出す
       var real = entries.filter(S.notSkip);
       var noPfc = real.filter(function (e) { return !hasPfc(e.nutrients); }).length;
-      var html = summaryHtml(totals, tg, burned,
-        (!dt.imported && noPfc) ? noPfc : 0, real.length);
-      SLOTS.forEach(function (sl) {
-        html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }), linkedNames);
+      var sourceReady = Views.advice && Views.advice._prepareSourceClassification
+        ? Views.advice._prepareSourceClassification() : Promise.resolve();
+      return sourceReady.catch(function () { return null; }).then(function () {
+        var sources = Views.advice && Views.advice._sourceBreakdown
+          ? Views.advice._sourceBreakdown(real, totals) : null;
+        var html = summaryHtml(totals, tg, burned,
+          (!dt.imported && noPfc) ? noPfc : 0, real.length, sources);
+        SLOTS.forEach(function (sl) {
+          html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }), linkedNames);
+        });
+        html += exerciseHtml(exercises, burned);
+        html += '<div class="tiny muted" style="padding:4px 2px 0">栄養値の出典: ' +
+          A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') + '</div>';
+        view.innerHTML = html;
+        bind(view, state);
       });
-      html += exerciseHtml(exercises, burned);
-      html += '<div class="tiny muted" style="padding:4px 2px 0">栄養値の出典: ' +
-        A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') + '</div>';
-      view.innerHTML = html;
-      bind(view, state);
     });
   }
 
-  function summaryHtml(t, tg, burned, noPfc, total) {
+  function summaryHtml(t, tg, burned, noPfc, total, sources) {
     var kcal = Math.round(t.kcal || 0);
     var goal = tg.kcal.goal;
     var net = kcal - burned;
-    var pct = goal ? Math.min(100, Math.round(net / goal * 100)) : 0;
     var over = net > goal;
     var rest = goal - net;
     return '' +
@@ -73,7 +78,10 @@
           '<div class="sum-meta"><div class="sum-goal">目標 ' + goal + ' kcal</div>' +
             '<span class="sum-action">採点を見る ›</span></div>' +
         '</div>' +
-        '<div class="bar' + (over ? ' over' : '') + '"><i style="width:' + pct + '%"></i></div>' +
+        summarySourceBar(sources, kcal, goal, over) +
+        '<div class="source-legend summary-source-legend" aria-label="摂取カロリーの内訳">' +
+          '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
+          '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>' +
         '<div class="sum-goal">' +
           (burned ? '運動 -' + burned + ' kcal ／ ' : '') +
           (over ? 'あと ' + Math.abs(rest) + ' kcal オーバー' : 'あと ' + rest + ' kcal') +
@@ -89,6 +97,22 @@
             'その食品をタップ →「栄養素を入力」で補えます。</div>'
           : '') +
       '</button>';
+  }
+
+  function summarySourceBar(sources, kcal, goal, over) {
+    var types = ['normal', 'sweets', 'alcohol', 'supplement'];
+    var row = sources && sources.kcal;
+    var sum = row ? types.reduce(function (total, type) {
+      return total + (Number(row[type]) || 0);
+    }, 0) : 0;
+    var width = goal ? Math.max(0, Math.min(100, kcal / goal * 100)) : 0;
+    if (!sum && kcal > 0) { row = { normal: kcal }; sum = kcal; }
+    var bars = sum ? types.map(function (type) {
+      var part = width * (Number(row[type]) || 0) / sum;
+      return part > 0 ? '<i class="src-' + type + '" style="width:' + part + '%"></i>' : '';
+    }).join('') : '';
+    return '<div class="bar source-stack' + (over ? ' over' : '') + '" role="img" aria-label="摂取カロリーの食品区分別内訳">' +
+      bars + '</div>';
   }
 
   /* 取り込んだ過去データなど、カロリーしか持たない食品があるので、
@@ -144,6 +168,9 @@
       '<button class="btn sub sm" data-add="' + sl.key + '">＋ 食品を追加</button>' +
       '<button class="btn sub sm" data-scan="' + sl.key + '">📷 バーコード</button>' +
       '</div>' +
+      (items.length && sl.key !== 'snack'
+        ? '<div class="add-row"><button class="btn sub sm" data-combo-from="' + sl.key +
+          '">🍱 この' + sl.name + 'を食品セットにする</button></div>' : '') +
       (items.length ? '' :
         '<div class="add-row"><button class="btn sub sm" data-skip="' + sl.key +
         '">🚫 食べなかった</button></div>') +
@@ -176,7 +203,7 @@
   function bind(view, state) {
     view.addEventListener('click', function (ev) {
       var t = ev.target.closest(
-        '[data-open-score],[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip]');
+        '[data-open-score],[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip],[data-combo-from]');
       if (!t) return;
       if (t.hasAttribute('data-open-score')) return A().setTab('advice');
       if (t.dataset.skip) {
@@ -188,6 +215,18 @@
       if (t.dataset.unskip) {
         return S.Entries.setSkipped(state.date, t.dataset.unskip, false).then(function () {
           A().render();
+        });
+      }
+      if (t.dataset.comboFrom) {
+        var fromSlot = t.dataset.comboFrom;
+        return S.Entries.byDate(state.date).then(function (rows) {
+          var items = rows.filter(function (e) {
+            return e.slot === fromSlot && S.notSkip(e);
+          }).map(comboItemFromEntry);
+          if (!items.length) { A().toast('セットにできる食品がありません'); return; }
+          openComboEdit(state, fromSlot, {
+            name: slotName(fromSlot) + 'セット', items: items, useCount: 0, usedAt: 0
+          });
         });
       }
       if (t.dataset.add) return openAdd(state, t.dataset.add);
@@ -243,6 +282,14 @@
     var q = body.querySelector('#q');
     var results = body.querySelector('#results');
     var slotFilter = body.querySelector('#slotFilter');
+    var shownHistory = Object.create(null), historyToken = 0;
+
+    // 画面に出した記録そのものを保持し、旧データのID型や欠損に左右されず開く。
+    function historyRow(x) {
+      var key = 'history-' + (++historyToken);
+      shownHistory[key] = x;
+      return resRow(x, 'hist', key);
+    }
 
     /* 1文字打つたびに18,000件超の記録をIndexedDBから読み直すと重いので、
        このシートを開いているあいだは結果を使い回す。
@@ -313,7 +360,7 @@
       histList().then(function (all2) {
         var list = all2.slice(0, 80);
         results.innerHTML = list.length
-          ? list.map(function (x) { return resRow(x, 'hist'); }).join('')
+          ? list.map(historyRow).join('')
           : '<div class="empty">' + (histSlot ? slotName(histSlot) + 'の' : '') +
             '記録がありません</div>';
       });
@@ -357,7 +404,7 @@
         }
         if (hist.length) {
           html2 += group('履歴' + (histSlot ? '（' + slotName(histSlot) + '）' : ''), '',
-            hist.map(function (x) { return resRow(x, 'hist'); }).join(''));
+            hist.map(historyRow).join(''));
         }
         if (seibun.length) {
           html2 += group('成分表のほかの候補', '素材そのものの100gあたり',
@@ -453,9 +500,13 @@
           openAmount(state, slot, pick);
         });
       } else {
+        var shown = shownHistory[id];
+        if (shown) { openAmount(state, slot, fromEntry(shown)); return; }
+        // 旧画面からの操作にも備え、IDは文字列として比較する。
         S.Entries.byDate(row.dataset.date).then(function (rows) {
-          var src2 = rows.filter(function (x) { return x.id === id; })[0];
-          if (src2) openAmount(state, slot, fromEntry(src2)); else A().backSheet();
+          var src2 = rows.filter(function (x) { return String(x.id) === String(id); })[0];
+          if (src2) openAmount(state, slot, fromEntry(src2));
+          else { A().backSheet(); A().toast('履歴を開けませんでした。もう一度検索してください'); }
         });
       }
     });
@@ -469,7 +520,7 @@
     return '食事';
   }
 
-  function resRow(x, kind) {
+  function resRow(x, kind, pickKey) {
     if (kind === 'common') {
       return '<button class="res" data-pick="' + A().esc(x.key) + '" data-kind="common">' +
         '<b>' + A().esc(x.label) + '</b><span>' +
@@ -498,6 +549,7 @@
         '<b>🍱 ' + A().esc(x.name) + '</b><span>' + (x.items || []).length + '品 ・ ' +
         Math.round(kc) + ' kcal ・ ' +
         A().esc((x.items || []).map(function (i) { return i.name; }).join(' / ').slice(0, 40)) +
+        ' ・ タップして確認・編集' +
         '</span></button>';
     }
     if (kind === 'my') {
@@ -507,7 +559,7 @@
         per + ' ' + Math.round((x.nutrients && x.nutrients.kcal) || 0) + ' kcal' +
         (x.barcode ? ' ・ バーコード登録済' : '') + '</span></button>';
     }
-    return '<button class="res" data-pick="' + A().esc(x.id) + '" data-kind="hist" data-date="' +
+    return '<button class="res" data-pick="' + A().esc(pickKey || x.id) + '" data-kind="hist" data-date="' +
       A().esc(x.date) + '"><b>' + A().esc(x.name) + '</b><span>' + A().esc(amountText(x)) +
       ' ・ ' + Math.round((x.nutrients && x.nutrients.kcal) || 0) + ' kcal ・ ' + A().esc(x.date) +
       '</span></button>';
@@ -516,6 +568,17 @@
   /* ---------------- セット(自分で組み合わせた食事) ---------------- */
   function comboTotals(c) {
     return F.sum((c.items || []).map(function (i) { return i.nutrients; }));
+  }
+
+  function comboItemFromEntry(e) {
+    var est = e.est ? Object.assign({}, e.est) : null;
+    if (est && Array.isArray(est.keys)) est.keys = est.keys.slice();
+    return {
+      name: e.name, amount: e.amount, unit: e.unit || 'g',
+      nutrients: Object.assign({}, e.nutrients || {}),
+      est: est || undefined,
+      ref: e.ref ? Object.assign({}, e.ref) : { type: 'history' }
+    };
   }
 
   /* セットを選んだとき: 中身を確認してまとめて記録する */

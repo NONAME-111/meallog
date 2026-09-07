@@ -250,6 +250,11 @@
         ? 'merge' : null;
       if (!mode) return;
       S.importAll(data, mode).then(function () {
+        // 古いバックアップを取り込んだ直後にも、再起動を待たず設定移行を適用する。
+        return S.migrateToilet();
+      }).then(function () {
+        return S.migrateExerciseGoal();
+      }).then(function () {
         return A().reloadSettings();
       }).then(function () {
         A().toast('取り込みました'); A().render();

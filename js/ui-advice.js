@@ -10,22 +10,25 @@
     { key: 1, label: '当日' }, { key: 7, label: '過去7日' }, { key: 30, label: '過去30日' }
   ];
   var period = 1;
-  var openGroups = { pfc: true };
   var sourceFoodById = {};
   var sourceSweetRules = [];
   var SOURCE_TYPES = ['normal', 'sweets', 'alcohol', 'supplement'];
   var ALCOHOL_NAME = /酒|ビール|ワイン|焼酎|日本酒|ハイボール|ウイスキー|ウィスキー|ブランデー|チューハイ|サワー|梅酒|カクテル|ホッピー|発泡酒|シャンパン|モルツ|エール|ストロング|スーパードライ|贅沢搾り|ほろよい|氷結|檸檬堂|金麦|淡麗|本麒麟|クリアアサヒ/i;
 
   var GROUPS = [
-    { key: 'kcal', icon: '🔥', label: 'カロリー', weight: 20, scored: ['kcal'], extra: [] },
+    { key: 'kcal', icon: '🔥', label: 'カロリー', weight: 20,
+      scored: ['kcal'], shown: ['kcal'], more: [] },
     { key: 'pfc', icon: '🍚', label: 'PFCバランス', weight: 28,
-      scored: ['protein', 'fat', 'sugar'], extra: ['carb'] },
+      scored: ['protein', 'fat', 'sugar'], shown: ['protein', 'fat', 'sugar', 'carb'], more: [] },
     { key: 'quality', icon: '🧂', label: '塩分・脂質の質', weight: 16,
-      scored: ['salt', 'satfat'], extra: ['monofat', 'polyfat', 'n3', 'n6', 'chol'] },
+      scored: ['salt', 'satfat'], shown: ['salt', 'satfat', 'chol'],
+      more: ['monofat', 'polyfat', 'n3', 'n6'] },
     { key: 'micro', icon: '🥬', label: 'ビタミン・ミネラル', weight: 36,
       scored: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc'],
-      extra: ['k', 'mg', 'zn', 'vitd', 'vite', 'niacin', 'vitb6', 'vitb12', 'folate'] },
-    { key: 'exercise', icon: '🏃', label: '運動', weight: 10, scored: ['exercise'], extra: [] }
+      shown: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc', 'vite'],
+      more: ['k', 'mg', 'zn', 'vitd', 'niacin', 'vitb6', 'vitb12', 'folate'] },
+    { key: 'exercise', icon: '🏃', label: '運動', weight: 10,
+      scored: ['exercise'], shown: ['exercise'], more: [] }
   ];
 
   function render(view, state) {
@@ -65,19 +68,6 @@
       period = parseInt(b.dataset.p, 10); A().render();
     });
     view.addEventListener('click', function (ev) {
-      var group = ev.target.closest('[data-score-group]');
-      if (group) {
-        var key = group.getAttribute('data-score-group');
-        var opened = group.getAttribute('aria-expanded') !== 'true';
-        var section = group.closest('.score-group');
-        var body = section && section.querySelector('.score-group-body');
-        var arrow = group.querySelector('[data-group-arrow]');
-        openGroups[key] = opened;
-        group.setAttribute('aria-expanded', opened ? 'true' : 'false');
-        if (body) body.hidden = !opened;
-        if (arrow) arrow.textContent = opened ? '⌃' : '⌄';
-        return;
-      }
       var rich = ev.target.closest('[data-rich]');
       if (rich) showRichFoods(rich.getAttribute('data-rich'));
     });
@@ -353,9 +343,9 @@
     var byKey = {};
     sc.detail.forEach(function (d) { byKey[d.key] = d; });
     var h = '<div class="card score-groups"><div class="row between"><h3>採点と摂取量</h3>' +
-      '<span class="tiny muted">区分をタップして展開</span></div>' + sourceLegend();
+      '<span class="tiny muted">主な項目を常に表示</span></div>' + sourceLegend();
     GROUPS.forEach(function (group) {
-      var opened = !!openGroups[group.key], sum = 0, included = 0;
+      var sum = 0, included = 0;
       group.scored.forEach(function (key) {
         var d = byKey[key]; if (!d || d.excluded) return;
         sum += d.sc * d.weight; included += d.weight;
@@ -363,16 +353,22 @@
       var points = included ? sum / included * group.weight : null;
       var pct = points == null ? 0 : points / group.weight * 100;
       var color = points == null ? 'muted' : pct >= 80 ? 'ok' : pct >= 60 ? 'high' : 'bad';
-      h += '<section class="score-group"><button class="score-group-head" data-score-group="' + group.key +
-        '" aria-expanded="' + opened + '"><span class="score-group-title"><span>' + group.icon + '</span><b>' +
+      h += '<section class="score-group" data-score-section="' + group.key + '"><div class="score-group-head score-group-static"><span class="score-group-title"><span>' + group.icon + '</span><b>' +
         group.label + '</b></span><span class="score-group-result ' + color + '">' +
-        (points == null ? '対象外' : N.fmt(points) + ' / ' + group.weight + '点') +
-        ' <i data-group-arrow="1">' + (opened ? '⌃' : '⌄') + '</i></span></button>' +
+        (points == null ? '対象外' : N.fmt(points) + ' / ' + group.weight + '点') + '</span></div>' +
         '<div class="score-group-bar"><i class="' + color + '" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></i></div>';
-      h += '<div class="score-group-body"' + (opened ? '' : ' hidden') + '>';
-      group.scored.concat(group.extra).forEach(function (key) {
+      h += '<div class="score-group-body">';
+      group.shown.forEach(function (key) {
         h += nutrientRow(key, byKey[key], totals, tg, coverage, estimated, activity, sources);
       });
+      if (group.more.length) {
+        h += '<details class="score-more" data-score-more="' + group.key + '"><summary>その他の項目（' +
+          group.more.length + '項目）</summary><div class="score-more-body">';
+        group.more.forEach(function (key) {
+          h += nutrientRow(key, byKey[key], totals, tg, coverage, estimated, activity, sources);
+        });
+        h += '</div></details>';
+      }
       if (group.key === 'exercise' && (!activity || !activity.hasData)) {
         h += '<div class="exercise-connect">歩数が取り込まれていません。カラダタブの「歩数を取り込む」で入れると採点されます</div>';
       }

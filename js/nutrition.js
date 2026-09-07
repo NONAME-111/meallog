@@ -158,9 +158,17 @@
       else out.push({ icon: '✅', text: 'カロリーは目標の範囲内です（' + Math.round(e.intake) + ' / ' + e.goal + ' kcal）。' });
     }
 
+    // 運動は食品由来の栄養不足とは分け、常に運動用アイコンで案内する。
+    var exercise = byKey.exercise;
+    if (exercise && !exercise.excluded && exercise.ratio < 1) {
+      out.push({ icon: '🏃', text: '運動は ' + Math.round(exercise.intake) + ' / ' +
+        Math.round(exercise.goal) + ' kcal相当です。歩数や短い運動を少し足すと目標に近づきます。' });
+    }
+
     // 不足しているもの(比率の低い順)
     var lacks = d.filter(function (x) {
-      return !x.excluded && x.kind === 'min' && x.ratio < 0.8 && (ctx && ctx.hasEntries);
+      return x.key !== 'exercise' && !x.excluded && x.kind === 'min' && x.ratio < 0.8 &&
+        (ctx && ctx.hasEntries);
     }).sort(function (a, b) { return a.ratio - b.ratio; }).slice(0, 3);
     lacks.forEach(function (x) {
       var m = global.Foods.meta(x.key);
@@ -187,12 +195,6 @@
           fmt(x.intake) + ' / ' + fmt(lim) + ' ' + m[1] + '）。' + overText(x.key)
       });
     });
-
-    var exercise = byKey.exercise;
-    if (exercise && !exercise.excluded && exercise.ratio < 1 && out.length < 4) {
-      out.push({ icon: '🏃', text: '運動は ' + Math.round(exercise.intake) + ' / ' +
-        Math.round(exercise.goal) + ' kcal相当です。歩数や短い運動を少し足すと目標に近づきます。' });
-    }
 
     if (ctx && ctx.hasEntries && out.length < 3) {
       out.push({ icon: '👍', text: 'バランスよく摂れています。この調子で続けましょう。' });

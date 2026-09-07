@@ -91,6 +91,16 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .bar{height:7px;background:rgba(255,255,255,.3);border-radius:99px;overflow:hidden;margin:10px 0 4px}
 .bar > i{display:block;height:100%;background:#fff;border-radius:99px;transition:width .3s}
 .bar.over > i{background:#ffd8a8}
+.summary .bar.source-stack{display:flex}
+.summary .bar.source-stack > i{display:block;height:100%;border-radius:0;flex:none}
+.summary .bar.source-stack > i:first-child{border-radius:99px 0 0 99px}
+.summary .bar.source-stack > i:last-child{border-radius:0 99px 99px 0}
+.summary .bar.source-stack > i.src-normal{background:var(--src-normal)}
+.summary .bar.source-stack > i.src-sweets{background:var(--src-sweets)}
+.summary .bar.source-stack > i.src-alcohol{background:var(--src-alcohol)}
+.summary .bar.source-stack > i.src-supplement{background:var(--src-supplement)}
+.summary-source-legend{margin:5px 0 2px;color:rgba(255,255,255,.9)}
+.summary-source-legend span{font-size:9px}
 .pfc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
 .pfc div{background:rgba(255,255,255,.16);border-radius:8px;padding:6px 8px;text-align:center}
 .pfc b{display:block;font-size:15px}
@@ -153,6 +163,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .score-group:first-of-type{margin-top:9px}
 .score-group-head{width:100%;display:flex;align-items:center;justify-content:space-between;
   gap:10px;text-align:left;padding:0 1px}
+.score-group-static{cursor:default}
 .score-group-title{display:flex;align-items:center;gap:8px;font-size:14px}
 .score-group-result{font-size:12px;font-weight:700;white-space:nowrap}
 .score-group-result.ok{background:none;color:var(--green)}
@@ -164,6 +175,9 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .score-group-bar > i{display:block;height:100%;border-radius:99px}
 .score-group-bar > i.muted,.nut-detail .nut-bar > i.muted{background:var(--line)}
 .score-group-body{margin-top:10px;padding:0 3px 0 5px;border-left:2px solid var(--line)}
+.score-more{border-top:1px solid var(--line);margin-top:3px;padding-top:5px}
+.score-more summary{padding:7px 5px;color:var(--green);font-size:12px;font-weight:700;cursor:pointer}
+.score-more-body{padding-left:5px}
 .nut-detail{display:block;width:100%;padding:9px 5px;border-top:1px solid var(--line);text-align:left}
 .nut-detail:first-child{border-top:0}
 .nut-detail.tappable{border-radius:8px}
@@ -201,6 +215,11 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .nutrient-field input{padding:8px}
 .nut-more{border-top:1px solid var(--line);margin:3px 0 10px;padding-top:8px}
 .nut-more summary{padding:5px 0 9px;color:var(--green);font-size:13px;font-weight:700;cursor:pointer}
+.step-method{margin-bottom:10px;padding:10px;border-radius:9px;background:var(--green-l)}
+.step-method p{margin:5px 0}
+.step-shortcut{margin:8px 0 12px;border:1px solid var(--line);border-radius:9px;padding:4px 10px}
+.step-shortcut summary{padding:7px 0;color:var(--green);font-weight:700;cursor:pointer}
+.step-shortcut p{margin:6px 0}
 
 /* ---- グラフ ---- */
 .chart-wrap{position:relative;width:100%;overflow-x:auto}
@@ -256,6 +275,7 @@ canvas.chart{width:100%;height:190px;display:block}
   .score-group-bar{background:#2b3540}
   .nut-detail.tappable:active{background:#242a31}
   .exercise-connect{background:#222c28}
+  .step-method{background:#19372a}
   .tag.registered{background:#19372a}
   input[type=text],input[type=number],input[type=date],input[type=time],select,textarea{
     background:#111820;border-color:#465564;box-shadow:inset 0 1px 2px rgba(0,0,0,.35)}
