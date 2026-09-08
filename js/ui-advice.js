@@ -31,6 +31,15 @@
       scored: ['exercise'], shown: ['exercise'], more: [] }
   ];
 
+  /* 色だけで良し悪しを伝えないための記号と文字。
+     緑と赤は1型色覚だと同じ色に見えるので、色は補助でしかない */
+  var GROUP_VERDICT = {
+    ok: { mark: '◎', text: '良好' },
+    high: { mark: '△', text: '注意' },
+    bad: { mark: '✕', text: '要改善' }
+  };
+  var JUDGE_MARK = { ok: '◎', low: '▼', high: '▲', bad: '✕' };
+
   function render(view, state) {
     return prepareSourceClassification().then(function () {
       return period === 1 ? renderDay(view, state) : renderRange(view, state, period);
@@ -88,14 +97,20 @@
     var hasExercise = exercises.length > 0;
     var hasSteps = !!(body && typeof body.steps === 'number' && isFinite(body.steps));
     var steps = hasSteps ? Math.max(0, body.steps) : null;
+    // ヘルスケアの活動エネルギーは実測なので、あればそれを使う。
+    // 歩数x0.025の換算は、よく歩いた日で実測の半分以下になることがある
+    var activeKcal = body && typeof body.activeKcal === 'number' && isFinite(body.activeKcal)
+      ? Math.max(0, body.activeKcal) : null;
+    var hasActive = activeKcal != null;
     // 歩数記録とbody.stepsは同じ歩行を表すため、併存時は更新可能なbody.stepsを優先する。
-    var stepKcal = hasSteps ? steps * 0.025 : walkExerciseKcal;
+    var stepKcal = hasActive ? activeKcal : (hasSteps ? steps * 0.025 : walkExerciseKcal);
     return {
-      hasData: hasExercise || hasSteps,
+      hasData: hasExercise || hasSteps || hasActive,
       value: F.round(exerciseKcal + stepKcal, 1),
       exerciseKcal: F.round(exerciseKcal, 1), stepKcal: F.round(stepKcal, 1),
       walkExerciseKcal: F.round(walkExerciseKcal, 1), steps: steps,
-      walkSource: hasSteps ? 'steps' : (walkExerciseKcal ? 'exercise' : '')
+      activeKcal: hasActive ? F.round(activeKcal, 1) : null,
+      walkSource: hasActive ? 'active' : (hasSteps ? 'steps' : (walkExerciseKcal ? 'exercise' : ''))
     };
   }
 
@@ -291,7 +306,7 @@
       if (t == null) {
         h += '<div class="daybar" title="' + A().esc(x.date) + ' データ不足"><i style="height:2%;background:var(--line)"></i><span class="tiny muted">?</span></div>'; return;
       }
-      var color = t >= 80 ? 'var(--green)' : (t >= 60 ? 'var(--orange)' : 'var(--red)');
+      var color = t >= 80 ? 'var(--judge-ok)' : (t >= 60 ? 'var(--judge-warn)' : 'var(--judge-bad)');
       h += '<div class="daybar" title="' + A().esc(x.date) + ' ' + t + '点"><i style="height:' +
         Math.max(2, t) + '%;background:' + color + '"></i><span class="tiny muted">' + (+x.date.slice(8, 10)) + '</span></div>';
     });
@@ -300,8 +315,8 @@
 
   function scoreCard(sc, hasEntries, missing, note) {
     var t = sc.total, dataShort = hasEntries && t == null, shown = dataShort ? 0 : (t || 0);
-    var color = dataShort ? 'var(--tx3)' : t >= 80 ? 'var(--accent-text)' :
-      (t >= 60 ? 'var(--warning-text)' : 'var(--danger-text)');
+    var color = dataShort ? 'var(--tx3)' : t >= 80 ? 'var(--judge-ok)' :
+      (t >= 60 ? 'var(--judge-warn)' : 'var(--judge-bad)');
     var label = !hasEntries ? '未記録' : dataShort ? 'データ不足' : t >= 90 ? '素晴らしい' :
       t >= 80 ? 'とても良い' : t >= 70 ? '良い' : t >= 60 ? 'もう少し' : t >= 40 ? '改善の余地あり' : '要改善';
     return '<div class="card score-card"><div class="score-ring">' + ring(shown, color) +
@@ -354,9 +369,12 @@
       var points = included ? sum / included * group.weight : null;
       var pct = points == null ? 0 : points / group.weight * 100;
       var color = points == null ? 'muted' : pct >= 80 ? 'ok' : pct >= 60 ? 'high' : 'bad';
+      var verdict = GROUP_VERDICT[color];
       h += '<section class="score-group" data-score-section="' + group.key + '"><div class="score-group-head score-group-static"><span class="score-group-title"><span>' + group.icon + '</span><b>' +
         group.label + '</b></span><span class="score-group-result ' + color + '">' +
-        (points == null ? '対象外' : N.fmt(points) + ' / ' + group.weight + '点') + '</span></div>';
+        (points == null ? '対象外'
+          : '<i class="judge-mark" aria-hidden="true">' + verdict.mark + '</i>' + verdict.text + ' ' +
+            N.fmt(points) + ' / ' + group.weight + '点') + '</span></div>';
       h += '<div class="score-group-body">';
       group.shown.forEach(function (key) {
         h += nutrientRow(key, byKey[key], totals, tg, coverage, estimated, activity, sources);
@@ -431,16 +449,34 @@
     var limit = target ? (target.max || target.goal) : null;
     var ratio = known && target && target.goal ? value / target.goal : 0;
     var limitRatio = known && limit ? value / limit : 0;
-    var cls = 'ok';
-    if (!known || (detail && detail.excluded)) cls = 'muted';
-    else if (target && target.kind === 'min') cls = ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad');
-    else if (target && target.kind === 'max') cls = limitRatio <= 1 ? 'ok' : (limitRatio <= 1.3 ? 'high' : 'bad');
-    else if (target && target.kind === 'band') {
-      cls = value >= target.goal && value <= target.max ? 'ok' :
-        (value < target.goal ? (ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad')) :
-          (limitRatio <= 1.3 ? 'high' : 'bad'));
+    var cls = 'ok', judge = '適正';
+    if (!known || (detail && detail.excluded)) { cls = 'muted'; judge = ''; }
+    else if (target && target.kind === 'min') {
+      cls = ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad');
+      judge = cls === 'ok' ? '足りている' : (cls === 'low' ? '不足' : '大きく不足');
     }
-    else if (target) cls = Math.abs(ratio - 1) <= 0.1 ? 'ok' : (Math.abs(ratio - 1) <= 0.25 ? 'high' : 'bad');
+    else if (target && target.kind === 'max') {
+      cls = limitRatio <= 1 ? 'ok' : (limitRatio <= 1.3 ? 'high' : 'bad');
+      judge = cls === 'ok' ? '範囲内' : (cls === 'high' ? '超過' : '大きく超過');
+    }
+    else if (target && target.kind === 'band') {
+      if (value >= target.goal && value <= target.max) { cls = 'ok'; judge = '適正'; }
+      else if (value < target.goal) {
+        cls = ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad');
+        judge = cls === 'ok' ? '適正' : (cls === 'low' ? '不足' : '大きく不足');
+      } else {
+        cls = limitRatio <= 1.3 ? 'high' : 'bad';
+        judge = cls === 'high' ? '超過' : '大きく超過';
+      }
+    }
+    else if (target) {
+      var gap = Math.abs(ratio - 1);
+      cls = gap <= 0.1 ? 'ok' : (gap <= 0.25 ? 'high' : 'bad');
+      judge = cls === 'ok' ? '目安どおり'
+        : ratio > 1 ? (cls === 'high' ? 'やや多い' : '多すぎ')
+          : (cls === 'high' ? 'やや少ない' : '少なすぎ');
+    }
+    else judge = '';
     var clickable = detail && !detail.excluded && (detail.kind === 'min' || detail.kind === 'band') &&
       detail.ratio < 1 && key !== 'exercise';
     var tag = clickable ? 'button' : 'div';
@@ -459,13 +495,17 @@
         : '<div class="nut-bar source-stack">' + sourceBar(key, sources, spec.fill) +
           targetMarkers(spec) + '</div>';
     }
-    h += '<div class="nut-flags">' + (detail && detail.excluded ? '<span>採点対象外</span>' : '') +
+    h += '<div class="nut-flags">' +
+      (judge ? '<span class="judge-tag ' + cls + '"><i class="judge-mark" aria-hidden="true">' +
+        JUDGE_MARK[cls] + '</i>' + judge + '</span>' : '') +
+      (detail && detail.excluded ? '<span>採点対象外</span>' : '') +
       (key !== 'exercise' && cov < 0.999 ? '<span>カバー ' + Math.round(cov * 100) + '%</span>' : '') +
       (est > 0 ? '<span>推定 ' + Math.round(est * 100) + '%</span>' : '') +
       (clickable ? '<span class="rich-hint">多い食品を見る ›</span>' : '') + '</div>';
     if (key === 'exercise' && activity && activity.hasData) {
       h += '<div class="tiny muted activity-breakdown">運動記録 ' + N.fmt(activity.exerciseKcal) +
-        ' kcal ＋ 歩数由来 ' + N.fmt(activity.stepKcal) + ' kcal' +
+        ' kcal ＋ ' + (activity.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数由来 ') +
+        N.fmt(activity.stepKcal) + ' kcal' +
         (activity.steps != null ? '（' + Math.round(activity.steps).toLocaleString() + '歩）' :
           activity.days != null ? '（データあり ' + activity.days + '/' + activity.totalDays + '日）' : '') + '</div>';
     }

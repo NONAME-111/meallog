@@ -303,7 +303,7 @@
 
   /* ---------------- カラダ記録 ---------------- */
   function blankBody(date) {
-    return { date: date, weight: null, bodyFat: null, steps: null, custom: {},
+    return { date: date, weight: null, bodyFat: null, steps: null, activeKcal: null, custom: {},
       bowel: '', toilet: [], mealTimes: {}, memo: '' };
   }
 
@@ -339,16 +339,22 @@
       var byDate = {};
       (rows || []).forEach(function (row) {
         if (!row || !row.date || !Number.isFinite(Number(row.steps))) return;
-        byDate[row.date] = Math.max(0, Math.round(Number(row.steps)));
+        // 活動エネルギー(実測)は入っている日だけ持つ。無い日は既存値をそのまま残す
+        var kcal = Number(row.activeKcal);
+        byDate[row.date] = {
+          steps: Math.max(0, Math.round(Number(row.steps))),
+          activeKcal: Number.isFinite(kcal) && kcal >= 0 ? Math.round(kcal * 10) / 10 : null
+        };
       });
       rows = Object.keys(byDate).map(function (date) {
-        return { date: date, steps: byDate[date] };
+        return { date: date, steps: byDate[date].steps, activeKcal: byDate[date].activeKcal };
       });
       return run('body', 'readwrite', function (s) {
         return Promise.all(rows.map(function (row) {
           return reqp(s.get(row.date)).then(function (rec) {
             rec = rec || blankBody(row.date);
             rec.steps = row.steps;
+            if (row.activeKcal != null) rec.activeKcal = row.activeKcal;
             return reqp(s.put(rec));
           });
         })).then(function () { return rows.length; });

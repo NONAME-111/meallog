@@ -59,7 +59,7 @@
       el.root.hidden = false;
       setMsg('カメラを起動中…');
       startCamera().then(function () {
-        setMsg('バーコードを枠内に');
+        setMsg('バーコードを枠内に（縦向きでも読めます）');
         startLoop();
       }).catch(function (err) {
         setMsg('カメラを使えません（' + shortErr(err) + '）。「写真で読取」をお試しください');
@@ -166,7 +166,7 @@
     loadZXing().then(function (ok) {
       if (!current || current.done) return;
       if (!ok) { setMsg('読取ライブラリを読み込めませんでした'); return; }
-      setMsg('バーコードを枠内に');
+      setMsg('バーコードを枠内に（縦向きでも読めます）');
       loopZXing();
     });
   }
@@ -202,6 +202,23 @@
     return mfr;
   }
 
+  /* 1次元バーコードは横方向の走査線で読むしくみなので、縦に印刷されたものは
+     そのままでは読めない。映像を90°回した絵も作って、両方を復号にかける。
+     canvas は width を入れ直すと状態が消えるので、回転はその後に掛ける。 */
+  function drawFrame(cv, ctx, src, w, h, rotate) {
+    if (rotate) {
+      cv.width = h; cv.height = w;
+      ctx.save();
+      ctx.translate(h / 2, w / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(src, -w / 2, -h / 2, w, h);
+      ctx.restore();
+    } else {
+      cv.width = w; cv.height = h;
+      ctx.drawImage(src, 0, 0, w, h);
+    }
+  }
+
   function decodeCanvas(cv, reader) {
     try {
       var Z = global.ZXing;
@@ -227,11 +244,13 @@
       var v = el.video;
       if (v && v.videoWidth) {
         var scale = Math.min(1, 1280 / v.videoWidth);
-        cv.width = Math.round(v.videoWidth * scale);
-        cv.height = Math.round(v.videoHeight * scale);
-        ctx.drawImage(v, 0, 0, cv.width, cv.height);
-        var code = decodeCanvas(cv, zxReader);
-        if (code) { vibrate(); finish(code); return; }
+        var w = Math.round(v.videoWidth * scale), h = Math.round(v.videoHeight * scale);
+        // まず横向き、だめなら縦向き。1フレームで両方試すので持ち替えは要らない
+        for (var i = 0; i < 2; i++) {
+          drawFrame(cv, ctx, v, w, h, i === 1);
+          var code = decodeCanvas(cv, zxReader);
+          if (code) { vibrate(); finish(code); return; }
+        }
       }
       zxTimer = setTimeout(tick, 180);
     };
@@ -274,15 +293,17 @@
     var reader = makeReader();
     var cv = document.createElement('canvas');
     var ctx = cv.getContext('2d', { willReadFrequently: true });
-    // 撮影画像は大きいことがあるので、いくつかの縮尺で試す
+    // 撮影画像は大きいことがあるので、いくつかの縮尺で試す。
+    // 縮尺ごとに横向き・縦向きの両方を試す
     var sizes = [1600, 1000, 2400];
     for (var i = 0; i < sizes.length; i++) {
       var sc = Math.min(1, sizes[i] / Math.max(img.naturalWidth, img.naturalHeight));
-      cv.width = Math.round(img.naturalWidth * sc);
-      cv.height = Math.round(img.naturalHeight * sc);
-      ctx.drawImage(img, 0, 0, cv.width, cv.height);
-      var code = decodeCanvas(cv, reader);
-      if (code) return code;
+      var w = Math.round(img.naturalWidth * sc), h = Math.round(img.naturalHeight * sc);
+      for (var r = 0; r < 2; r++) {
+        drawFrame(cv, ctx, img, w, h, r === 1);
+        var code = decodeCanvas(cv, reader);
+        if (code) return code;
+      }
     }
     return null;
   }
@@ -372,6 +393,10 @@
 
   global.Barcode = {
     scan: scan, lookup: lookup, searchByName: searchByName,
-    cancel: function () { finish(null); }
+    cancel: function () { finish(null); },
+    // 縦向きバーコードの復号を机上で確かめるための入口
+    _decodeImage: function (img) {
+      return loadZXing().then(function () { return decodeImageZXing(img); });
+    }
   };
 })(window);

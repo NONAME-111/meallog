@@ -1,4 +1,4 @@
-/* steps.js - Apple Health書き出しZIP/XMLと手入力から日別歩数を取り込む。 */
+/* steps.js - Apple Health書き出しZIP/XMLと手入力から、日別の歩数と活動エネルギーを取り込む。 */
 (function (global) {
   'use strict';
   var S = global.Store;
@@ -23,7 +23,7 @@
     }
     if (/^\d+$/.test(value)) value = (date || S.ymd(new Date())) + ':' + value;
     var parts = value.split(/[\r\n,]+/).filter(function (v) { return v.trim(); });
-    if (!parts.length || parts.length > 366) throw new Error('日付と歩数を1日ずつ、366日以内で入力してください');
+    if (!parts.length || parts.length > 3000) throw new Error('日付と歩数を1日ずつ、3000日以内で入力してください');
     parts.forEach(function (part) {
       var match = /^\s*(\d{4}-\d{2}-\d{2})\s*:\s*(\d+)\s*$/.exec(part);
       if (!match || !validDate(match[1])) throw new Error('日付は今日以前の YYYY-MM-DD、歩数は0以上の整数で入力してください');
@@ -52,13 +52,18 @@
     return out;
   }
 
+  var STEP_TYPE = 'HKQuantityTypeIdentifierStepCount';
+  var ENERGY_TYPE = 'HKQuantityTypeIdentifierActiveEnergyBurned';
+
   function healthCollector() {
     var maps = Object.create(null), meta = Object.create(null), seen = new Set();
+    var energy = Object.create(null), energySeen = new Set();
     var recordCount = 0, duplicateCount = 0;
     function add(tag) {
-      if (tag.indexOf('HKQuantityTypeIdentifierStepCount') === -1) return;
+      if (tag.indexOf(ENERGY_TYPE) !== -1) { addEnergy(tag); return; }
+      if (tag.indexOf(STEP_TYPE) === -1) return;
       var a = attributes(tag);
-      if (a.type !== 'HKQuantityTypeIdentifierStepCount' || a.unit !== 'count') return;
+      if (a.type !== STEP_TYPE || a.unit !== 'count') return;
       var value = Number(a.value), date = String(a.startDate || '').slice(0, 10);
       if (!isFinite(value) || value < 0 || !validDate(date)) return;
       var source = a.sourceName || '記録元不明';
@@ -78,6 +83,21 @@
       meta[source].records++;
       recordCount++;
     }
+    /* 活動エネルギー(実測の消費kcal)。歩数と同じく記録元ごとに、完全重複だけ除く。
+       単位は kcal のみ受ける(書き出しでは kcal 固定) */
+    function addEnergy(tag) {
+      var a = attributes(tag);
+      if (a.type !== ENERGY_TYPE || a.unit !== 'kcal') return;
+      var value = Number(a.value), date = String(a.startDate || '').slice(0, 10);
+      if (!isFinite(value) || value < 0 || !validDate(date)) return;
+      var source = a.sourceName || '記録元不明';
+      var key = [source, a.startDate || '', a.endDate || '', value].join('\u0001');
+      if (energySeen.has(key)) return;
+      energySeen.add(key);
+      if (!energy[source]) energy[source] = Object.create(null);
+      energy[source][date] = (energy[source][date] || 0) + value;
+    }
+
     function finish() {
       var sources = Object.keys(maps).map(function (name) {
         var rows = Object.keys(maps[name]).sort().map(function (date) {
@@ -92,10 +112,19 @@
             if (interval[1] > maxEnd) maxEnd = interval[1];
           });
         });
+        // 同じ記録元の活動エネルギーがあれば、日別合計を歩数の行に足しておく
+        var kcalByDate = energy[name] || Object.create(null);
+        var energyDays = 0;
+        rows.forEach(function (row) {
+          if (kcalByDate[row.date] == null) return;
+          row.activeKcal = Math.round(kcalByDate[row.date] * 10) / 10;
+          energyDays++;
+        });
         return {
           name: name, records: meta[name].records, days: rows.length, rows: rows,
           from: rows.length ? rows[0].date : '', to: rows.length ? rows[rows.length - 1].date : '',
-          total: rows.reduce(function (sum, row) { return sum + row.steps; }, 0), overlaps: overlaps
+          total: rows.reduce(function (sum, row) { return sum + row.steps; }, 0), overlaps: overlaps,
+          energyDays: energyDays
         };
       }).sort(function (a, b) { return b.days - a.days || b.records - a.records; });
       if (!sources.length) throw new Error('歩数データが見つかりませんでした');
@@ -211,7 +240,7 @@
 
   function openImport(initial) {
     var A = global.App;
-    var body = A.openSheet('歩数を取り込む',
+    var body = A.openSheet('ヘルスケアから取り込む',
       '<div class="step-method"><b>ヘルスケアから複数日分を一括取り込み</b>' +
       '<ol class="step-guide"><li>iPhoneの「ヘルスケア」を開く</li>' +
       '<li>「概要」右上のプロフィール画像 →「すべてのヘルスケアデータを書き出す」</li>' +
@@ -225,7 +254,7 @@
       '<select id="healthSource"></select></label>' +
       '<div class="health-preview" id="healthPreview"></div>' +
       '<p class="tiny muted" id="healthSourceNote"></p></div>' +
-      '<button class="btn wide" id="healthSave" disabled>この歩数を取り込む</button>' +
+      '<button class="btn wide" id="healthSave" disabled>この記録元から取り込む</button>' +
       '<p class="tiny muted">ZIPは外部へ送らず、この端末内だけで読み取ります。同じ日の歩数は加算せず、選んだ記録元の最新合計へ置き換えます。</p>' +
       '<details class="step-shortcut"><summary>1日分を数字で入力する場合</summary>' +
       '<label class="fld"><span>日付と歩数</span><textarea id="stepsText" rows="4" placeholder="2026-09-08:8432">' +
@@ -251,6 +280,9 @@
       previewBox.innerHTML = '<b>' + A.esc(source.days + '日分') + '</b><span>' +
         A.esc(source.from + ' ～ ' + source.to) + '</span><span>' +
         A.esc(source.records.toLocaleString() + '件の記録') + '</span>' +
+        (source.energyDays
+          ? '<span>活動エネルギー(実測の消費kcal) <strong>' + source.energyDays + '日分</strong></span>'
+          : '<span>活動エネルギーはこの記録元にありません</span>') +
         '<span><strong>同じ日の保存済み歩数には上乗せしません</strong></span>';
       var messages = [];
       if (parsed.sources.length > 1) {
@@ -262,6 +294,9 @@
           '件あります。取り込み前に日別合計を確認してください。');
       }
       messages.push('保存時は既存の同日歩数を、選んだ日別合計で置き換えます。');
+      if (source.energyDays) {
+        messages.push('活動エネルギーのある日は、歩数からの換算ではなく実測値で採点します。');
+      }
       note.textContent = messages.join(' ');
     }
 
@@ -294,9 +329,13 @@
       if (!source) return;
       save.disabled = true; save.textContent = '保存中…';
       S.Body.importSteps(source.rows).then(function (count) {
-        A.closeSheet(); A.toast(count + '日分の歩数を取り込みました', 4000); A.render();
+        A.closeSheet();
+        A.toast(count + '日分の歩数' +
+          (source.energyDays ? 'と' + source.energyDays + '日分の活動エネルギー' : '') +
+          'を取り込みました', 4000);
+        A.render();
       }).catch(function (e) {
-        save.disabled = false; save.textContent = 'この歩数を取り込む';
+        save.disabled = false; save.textContent = 'この記録元から取り込む';
         A.toast('取り込めませんでした: ' + e.message);
       });
     });

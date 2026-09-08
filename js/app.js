@@ -57,12 +57,15 @@
       cl.textContent = back ? '‹ 戻る' : '閉じる';
     }
     sheet.hidden = false;
+    // シートが開いている間はフロートの追加ボタンを隠す
+    document.body.classList.add('sheet-open');
     return body;
   }
 
   function closeSheet() {
     sheetStack = [];
     document.getElementById('sheet').hidden = true;
+    document.body.classList.remove('sheet-open');
     document.getElementById('sheetBody').innerHTML = '';
     var act = document.getElementById('sheetAction');
     act.hidden = true; act.onclick = null;

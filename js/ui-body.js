@@ -54,8 +54,12 @@
       '</div>' +
       '<label class="fld"><span>歩数</span><input type="number" inputmode="numeric" ' +
         'id="bSteps" value="' + (rec.steps == null ? '' : rec.steps) + '"></label>' +
-      '<button class="btn sub sm" data-stepimport="1">歩数を取り込む</button>' +
-      '<div class="step-import-help">ヘルスケアから書き出したZIPを選び、複数日分を一括で取り込みます。</div>' +
+      (rec.activeKcal != null
+        ? '<div class="tiny muted" style="margin:-4px 2px 8px">ヘルスケアの活動エネルギー（実測）' +
+          N.fmt(rec.activeKcal) + ' kcal。採点ではこの実測値を使います</div>'
+        : '') +
+      '<button class="btn sub sm" data-stepimport="1">ヘルスケアから取り込む</button>' +
+      '<div class="step-import-help">ヘルスケアから書き出したZIPを選び、歩数と活動エネルギーを複数日分まとめて取り込みます。</div>' +
       (!hasAnySteps ? '<div class="step-first">まだ歩数を取り込んでいません。ボタンを押して、ヘルスケアの一括書き出し手順を確認してください。</div>' : '') +
       '<div class="small muted">' +
         (bmi ? 'BMI ' + N.fmt(bmi) + '（' + bmiLabel(bmi) + '）' : 'BMIは身長の設定後に表示されます') +

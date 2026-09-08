@@ -60,6 +60,7 @@
             mealTimes[sl.key] || '');
         });
         html += exerciseHtml(exercises, burned);
+        html += fabHtml(entries);
         html += '<div class="tiny muted" style="padding:4px 2px 0">栄養値の出典: ' +
           A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') + '</div>';
         view.innerHTML = html;
@@ -128,7 +129,7 @@
   }
 
   function pfcCell(label, v, goal, unit) {
-    return '<div><b>' + Math.round(v || 0) + '<span style="font-size:10px">/' + goal + unit + '</span></b>' +
+    return '<div><b>' + Math.round(v || 0) + '<span class="of">/' + goal + unit + '</span></b>' +
       '<span>' + label + '</span></div>';
   }
 
@@ -208,10 +209,13 @@
 
   /* ---------------- イベント ---------------- */
   function bind(view, state) {
+    bindFab(view);
     view.addEventListener('click', function (ev) {
       var t = ev.target.closest(
-        '[data-open-score],[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip],[data-combo-from],[data-mealtime]');
+        '[data-open-score],[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip],[data-combo-from],[data-mealtime],[data-fab-tab]');
       if (!t) return;
+      if (t.closest('.fab-menu')) closeFabMenu(view);
+      if (t.dataset.fabTab) return A().setTab(t.dataset.fabTab);
       if (t.hasAttribute('data-open-score')) return A().setTab('advice');
       if (t.dataset.mealtime) return openMealTime(state, t.dataset.mealtime);
       if (t.dataset.skip) {
@@ -245,6 +249,38 @@
       if (t.dataset.entry) return openEntry(state, t.dataset.entry);
       if (t.dataset.addex) return openExercise(state, null);
       if (t.dataset.ex) return openExercise(state, t.dataset.ex);
+    });
+  }
+
+  function closeFabMenu(view) {
+    var menu = view.querySelector('#fabMenu'), btn = view.querySelector('#fabBtn');
+    if (!menu) return;
+    menu.hidden = true;
+    if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.classList.remove('is-open'); }
+  }
+
+  /* #view は描画のたびに作り直されるが document は残るので、
+     外側のリスナーは一度だけ付けて、そのつど現在の要素を探す */
+  var fabOutsideBound = false;
+
+  function bindFab(view) {
+    var btn = view.querySelector('#fabBtn'), menu = view.querySelector('#fabMenu');
+    if (!btn || !menu) return;
+    btn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var open = menu.hidden;
+      menu.hidden = !open;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.classList.toggle('is-open', open);
+    });
+    if (fabOutsideBound) return;
+    fabOutsideBound = true;
+    document.addEventListener('click', function (ev) {
+      if (ev.target.closest && ev.target.closest('.fab-wrap')) return;
+      closeFabMenu(document);
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') closeFabMenu(document);
     });
   }
 
@@ -560,6 +596,46 @@
   function slotName(k) {
     for (var i = 0; i < SLOTS.length; i++) if (SLOTS[i].key === k) return SLOTS[i].name;
     return '食事';
+  }
+
+  /* 時刻からいまの食事区分を見当づける。バーコードの行き先の初期値に使う。
+     見当なので、どこへ入るかはボタンに書いて分かるようにしてある */
+  function slotByTime() {
+    var h = new Date().getHours();
+    if (h < 10) return 'breakfast';
+    if (h < 15) return 'lunch';
+    if (h < 21) return 'dinner';
+    return 'snack';
+  }
+
+  /* スクロールしても消えない追加ボタン。押すとどこに入れるかを選ぶ。
+     #view ごと描き替わるので、状態を持たせず毎回組み直す */
+  function fabHtml(entries) {
+    var has = {};
+    entries.forEach(function (e) { if (S.notSkip(e)) has[e.slot] = true; });
+    var scanSlot = slotByTime();
+    var meals = SLOTS.map(function (sl) {
+      return '<button type="button" class="fab-item" data-add="' + sl.key + '">' +
+        '<span class="fab-ic">' + sl.icon + '</span><span class="fab-label">' + sl.name + '</span>' +
+        (has[sl.key] ? '<span class="fab-done" aria-label="記録あり">✓</span>' : '') + '</button>';
+    }).join('');
+    return '<div class="fab-wrap">' +
+      '<div class="fab-menu" id="fabMenu" hidden>' +
+        '<div class="fab-menu-title">どこに追加しますか？</div>' +
+        '<div class="fab-grid">' + meals + '</div>' +
+        '<div class="fab-grid fab-grid-3">' +
+          '<button type="button" class="fab-item" data-scan="' + scanSlot + '">' +
+            '<span class="fab-ic">📷</span><span class="fab-label">バーコード<br>' +
+            slotName(scanSlot) + 'へ</span></button>' +
+          '<button type="button" class="fab-item" data-addex="1">' +
+            '<span class="fab-ic">🏃</span><span class="fab-label">運動</span></button>' +
+          '<button type="button" class="fab-item" data-fab-tab="body">' +
+            '<span class="fab-ic">⚖️</span><span class="fab-label">カラダ</span></button>' +
+        '</div>' +
+      '</div>' +
+      '<button type="button" class="fab" id="fabBtn" aria-expanded="false" ' +
+        'aria-controls="fabMenu" aria-label="記録を追加">＋</button>' +
+      '</div>';
   }
 
   function resRow(x, kind, pickKey) {
@@ -1131,11 +1207,16 @@
         '<label class="fld" id="servWrap"><span>単位の呼び方</span>' +
           '<input type="text" id="mServ" value="' + A().esc(preset.servingLabel || '個') + '" placeholder="個 / 袋 / 食"></label>' +
       '</div>' +
-      '<div class="card"><h3>栄養成分表示を読み取る</h3>' +
-        '<div class="small muted">入力欄を長押しして「テキストをスキャン」を選ぶと、パッケージから読み取れます。' +
-        '表示されない場合は、カメラのLive Textでコピーして貼り付けてください。</div>' +
-        '<textarea id="mOcr" class="ocr-input" rows="6" placeholder="栄養成分表示の文字をここへ読み取る／貼り付ける"></textarea>' +
-        '<button class="btn line wide" id="mParse">読み取り結果を各欄へ反映</button>' +
+      '<div class="card" id="ocrCard"><h3>栄養成分表示を読み取る</h3>' +
+        '<ol class="scan-steps">' +
+          '<li>下の欄を<b>長押し</b>する</li>' +
+          '<li>出てきたメニューの<b>「テキストをスキャン」</b>を選ぶ</li>' +
+          '<li>カメラでパッケージの栄養成分表示を写す</li>' +
+        '</ol>' +
+        '<div class="small muted">読み取った数値は<b>そのまま下の各欄に入ります</b>。' +
+        'メニューに出ないときは、カメラアプリのLive Textでコピーして貼り付けてください。</div>' +
+        '<textarea id="mOcr" class="ocr-input" rows="6" placeholder="ここを長押し →「テキストをスキャン」"></textarea>' +
+        '<button class="btn line wide" id="mParse">もう一度、各欄へ反映する</button>' +
         '<div class="tiny muted" id="mParseResult" role="status"></div></div>' +
       '<div class="card"><h3>栄養成分</h3>' +
         '<div class="nut-edit-grid">' + nutrientFields(EDIT_MAIN, preset, initialEstKeys) + '</div>' +
@@ -1219,8 +1300,14 @@
     drawRef(); toggleServ();
     basis.addEventListener('change', function () { toggleServ(); drawRef(); });
 
-    body.querySelector('#mParse').addEventListener('click', function () {
-      var parsed = global.NutritionLabel.parse(body.querySelector('#mOcr').value);
+    var ocr = body.querySelector('#mOcr');
+
+    /* 読み取った文字を各欄へ写す。ボタンを押させず、文字が入った時点で自動で行う */
+    function applyOcr(auto) {
+      var text = ocr.value;
+      var result = body.querySelector('#mParseResult');
+      if (!text.trim()) { if (!auto) result.textContent = ''; return; }
+      var parsed = global.NutritionLabel.parse(text);
       parsed.foundKeys.forEach(function (key) {
         var input = body.querySelector('[data-nut="' + key + '"]');
         if (!input) return;
@@ -1231,11 +1318,25 @@
       if (parsed.servingLabel) body.querySelector('#mServ').value = parsed.servingLabel;
       if (parsed.grams) refGrams = parsed.grams;
       toggleServ(); drawRef();
-      var result = body.querySelector('#mParseResult');
       result.textContent = parsed.foundKeys.length
         ? parsed.foundKeys.map(function (k) { return F.meta(k)[0]; }).join('・') + 'を反映しました。数値を確認してください。'
         : '読み取れる栄養素がありませんでした。文字と単位を確認してください。';
+    }
+
+    var ocrTimer = 0;
+    ocr.addEventListener('input', function () {
+      clearTimeout(ocrTimer);
+      ocrTimer = setTimeout(function () { applyOcr(true); }, 400);
     });
+    body.querySelector('#mParse').addEventListener('click', function () { applyOcr(false); });
+
+    // 「栄養成分表示を読み取る」から来たときは、その欄をすぐ触れる位置に出す
+    if (preset.focusOcr) {
+      setTimeout(function () {
+        var card = body.querySelector('#ocrCard');
+        if (card) card.scrollIntoView({ block: 'start' });
+      }, 80);
+    }
 
     var unlink = body.querySelector('#mUnlink');
     if (unlink) unlink.addEventListener('click', function () {
@@ -1466,11 +1567,18 @@
       '<div class="tiny muted" style="margin-top:6px">バーコード ' + A().esc(code) +
       '<br>公開データベースには日本の商品がまだ少ないため、初回だけ内容を登録してください。' +
       '一度登録すれば、次からはこのバーコードを読むだけで呼び出せます。</div></div>' +
-      '<button class="btn wide" id="bNew">内容を手入力して登録</button>' +
+      '<button class="btn wide" id="bScanText">📷 パッケージの栄養成分表示を読み取る</button>' +
+      '<div class="tiny muted" style="margin:7px 2px 12px">' +
+      '読み取り欄を長押し →「テキストをスキャン」でカメラが開き、写した数値がそのまま各欄に入ります</div>' +
+      '<button class="btn sub wide" id="bNew">数値を自分で入力して登録</button>' +
       '<div class="card" style="margin-top:12px"><h3>登録済みのマイ食品に紐づける</h3>' +
       '<input type="text" id="bq" placeholder="食品名で絞り込み" autocomplete="off">' +
       '<div id="blist" style="margin-top:8px"></div></div>';
     var body = A().openSheet('バーコードを登録', html);
+
+    body.querySelector('#bScanText').addEventListener('click', function () {
+      openManual(state, slot, { barcode: code, basis: 'serving', focusOcr: true });
+    });
 
     body.querySelector('#bNew').addEventListener('click', function () {
       openManual(state, slot, { barcode: code, basis: 'serving' });
