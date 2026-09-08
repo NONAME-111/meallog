@@ -1,7 +1,8 @@
 :root{
-  --green:#3aa76d; --green-d:#2c8a58; --green-l:#e8f6ee;
-  --orange:#f0902b; --red:#e0503f; --blue:#3d7fd6;
-  --src-normal:#91bd48;--src-sweets:#ff6b32;--src-alcohol:#63add8;--src-supplement:#f5b52e;
+  --green:#147a4b; --green-d:#0d613b; --green-l:#e7f4ed;
+  --orange:#c85c00; --red:#b83a34; --blue:#006ead;
+  /* Okabe-Ito系の色相を使い、赤緑だけに頼らず凡例の文字でも区別する */
+  --src-normal:#009e73;--src-sweets:#d55e00;--src-alcohol:#0072b2;--src-supplement:#e69f00;
   --bg:#f4f5f7; --card:#fff; --line:#e3e6ea;
   --tx:#20242a; --tx2:#6b727d; --tx3:#9aa1ab;
   --hdr:56px; --tabh:calc(54px + env(safe-area-inset-bottom));
@@ -28,6 +29,7 @@ input,select,textarea{font:inherit;color:inherit}
   display:flex;align-items:center;justify-content:space-between;
 }
 .hdr-btn{width:52px;height:100%;font-size:28px;line-height:1;color:#fff;opacity:.9}
+.hdr-btn:disabled{opacity:.28;cursor:default}
 .hdr-center{display:flex;flex-direction:column;align-items:center;line-height:1.15}
 .date-label{color:#fff;font-weight:800;font-size:21px;letter-spacing:.01em}
 .ver{font-size:10px;opacity:.75}
@@ -99,12 +101,16 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .summary .bar.source-stack > i.src-sweets{background:var(--src-sweets)}
 .summary .bar.source-stack > i.src-alcohol{background:var(--src-alcohol)}
 .summary .bar.source-stack > i.src-supplement{background:var(--src-supplement)}
-.summary-source-legend{margin:5px 0 2px;color:rgba(255,255,255,.9)}
+.summary-source-panel{margin-top:10px;padding:8px 10px 5px;background:#fff;color:#20242a;
+  border:2px solid rgba(15,50,36,.28);border-radius:10px}
+.summary-source-panel .bar{height:11px;margin:0 0 6px;background:#dde2e7;border:1px solid #c7ced5}
+.summary-source-legend{margin:5px 0 2px;color:#3f4852}
 .summary-source-legend span{font-size:9px}
 .pfc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
-.pfc div{background:rgba(255,255,255,.16);border-radius:8px;padding:6px 8px;text-align:center}
+.pfc div{background:#fff;color:#20242a;border:2px solid rgba(15,50,36,.28);
+  border-radius:8px;padding:6px 8px;text-align:center}
 .pfc b{display:block;font-size:15px}
-.pfc span{font-size:10px;opacity:.85}
+.pfc span{font-size:10px;color:#4f5964}
 /* カロリーしか登録が無い食品が混ざっていて、PFCに反映できないときの注記 */
 .sum-note{margin-top:9px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.16);
   font-size:11px;line-height:1.5}
@@ -122,7 +128,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 /* ---- 食事スロット ---- */
 .slot-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.slot-title{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
 .slot-name{font-weight:700;font-size:14px}
+.meal-time{padding:4px 7px;border:1.5px solid var(--line);border-radius:7px;color:var(--tx2);
+  background:var(--card);font-size:11px;font-weight:700;white-space:nowrap}
+.meal-time.is-set{border-color:var(--green);color:var(--green-d)}
+.meal-time-sheet input[type=time]{font-size:22px;font-weight:700;text-align:center;min-height:54px}
 .slot-kcal{font-size:12px;color:var(--tx2)}
 .item{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
 .item:first-of-type{border-top:0}
@@ -151,7 +162,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .nut-name{width:96px;font-size:12px;flex:none}
 .nut-bar{flex:1;height:9px;background:#eef0f3;border-radius:99px;overflow:hidden;position:relative}
 .nut-bar > i{display:block;height:100%;border-radius:99px}
-.nut-bar > u{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--tx3);opacity:.7}
+.nut-bar > u,.nut-target-line{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--tx);
+  opacity:.9;z-index:3;text-decoration:none;box-shadow:0 0 0 1px rgba(255,255,255,.45)}
 .nut-val{width:76px;text-align:right;font-size:11px;color:var(--tx2);flex:none}
 .ok{background:var(--green)} .low{background:var(--blue)} .high{background:var(--orange)} .bad{background:var(--red)}
 .advice-li{display:flex;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
@@ -171,9 +183,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .score-group-result.bad{background:none;color:var(--red)}
 .score-group-result.muted{color:var(--tx3)}
 .score-group-result i{font-style:normal;color:var(--tx3);margin-left:3px}
-.score-group-bar{height:7px;margin-top:8px;background:#eef0f3;border-radius:99px;overflow:hidden}
-.score-group-bar > i{display:block;height:100%;border-radius:99px}
-.score-group-bar > i.muted,.nut-detail .nut-bar > i.muted{background:var(--line)}
+.nut-detail .nut-bar > i.muted{background:var(--line)}
 .score-group-body{margin-top:10px;padding:0 3px 0 5px;border-left:2px solid var(--line)}
 .score-more{border-top:1px solid var(--line);margin-top:3px;padding-top:5px}
 .score-more summary{padding:7px 5px;color:var(--green);font-size:12px;font-weight:700;cursor:pointer}
@@ -197,6 +207,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .source-legend{display:flex;flex-wrap:wrap;gap:5px 11px;margin:10px 0 1px;color:var(--tx2);font-size:10px}
 .source-legend span{display:flex;align-items:center;gap:4px}
 .source-legend i{display:inline-block;width:10px;height:10px;border-radius:3px}
+.source-legend i{border:1px solid rgba(20,26,32,.22)}
 .nut-flags{display:flex;gap:7px;justify-content:flex-end;min-height:15px;margin-top:4px;
   color:var(--tx3);font-size:10px}
 .nut-flags .rich-hint{color:var(--green);font-weight:600}
@@ -220,6 +231,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .step-shortcut{margin:8px 0 12px;border:1px solid var(--line);border-radius:9px;padding:4px 10px}
 .step-shortcut summary{padding:7px 0;color:var(--green);font-weight:700;cursor:pointer}
 .step-shortcut p{margin:6px 0}
+.health-file input[type=file]{display:block;width:100%;padding:10px;border:1.5px solid var(--line);
+  border-radius:9px;background:var(--card);color:var(--tx)}
+.health-status{min-height:20px;margin:5px 0 8px;font-weight:700}
+.health-preview{display:grid;gap:3px;margin:7px 0;padding:10px;border:1.5px solid var(--line);
+  border-radius:9px;background:var(--bg);font-size:12px}
+.health-preview b{color:var(--green-d);font-size:15px}
 
 /* ---- グラフ ---- */
 .chart-wrap{position:relative;width:100%;overflow-x:auto}
@@ -272,13 +289,15 @@ canvas.chart{width:100%;height:190px;display:block}
   .btn.sub{background:#2b3540;color:var(--tx);border:1px solid #3e4a57}
   .chip{background:#2b3540;border:1px solid #3e4a57}
   .nut-bar{background:#2b3540}
-  .score-group-bar{background:#2b3540}
   .nut-detail.tappable:active{background:#242a31}
   .exercise-connect{background:#222c28}
   .step-method{background:#19372a}
   .tag.registered{background:#19372a}
   input[type=text],input[type=number],input[type=date],input[type=time],select,textarea{
     background:#111820;border-color:#465564;box-shadow:inset 0 1px 2px rgba(0,0,0,.35)}
+  .health-file input[type=file]{background:#111820;border-color:#465564}
+  .health-preview{background:#111820;border-color:#465564}
+  .health-preview b{color:#86d9ad}
   .tap-btn{background:#202832;border-color:#465564}
   .sheet-head{background:#202832}
   .sheet-close{background:#2b3540;border:1px solid #465564;border-radius:7px;color:var(--tx);padding:6px 9px}

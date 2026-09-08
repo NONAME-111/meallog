@@ -7,7 +7,7 @@
   function A() { return global.App; }
 
   function blank(date) {
-    return { date: date, weight: null, bodyFat: null, steps: null, custom: {}, bowel: '', toilet: [], memo: '' };
+    return { date: date, weight: null, bodyFat: null, steps: null, custom: {}, bowel: '', toilet: [], mealTimes: {}, memo: '' };
   }
 
   function render(view, state) {
@@ -25,7 +25,7 @@
       view.innerHTML =
         weightCard(rec, st, tg, history) +
         customCard(rec, st) +
-        '<div class="card elimination-card">' + bowelCard(rec) + toiletCard(rec, st) + '</div>' +
+        '<div class="card elimination-card">' + bowelCard(rec) + toiletCard(rec, st, history) + '</div>' +
         memoCard(rec);
       bind(view, state, rec, st, history);
     });
@@ -55,8 +55,8 @@
       '<label class="fld"><span>歩数</span><input type="number" inputmode="numeric" ' +
         'id="bSteps" value="' + (rec.steps == null ? '' : rec.steps) + '"></label>' +
       '<button class="btn sub sm" data-stepimport="1">歩数を取り込む</button>' +
-      '<div class="step-import-help">iPhoneのショートカットで取り出した歩数を貼り付けます。</div>' +
-      (!hasAnySteps ? '<div class="step-first">まだ歩数を取り込んでいません。ボタンを押してショートカットの設定手順を確認してください。</div>' : '') +
+      '<div class="step-import-help">ヘルスケアから書き出したZIPを選び、複数日分を一括で取り込みます。</div>' +
+      (!hasAnySteps ? '<div class="step-first">まだ歩数を取り込んでいません。ボタンを押して、ヘルスケアの一括書き出し手順を確認してください。</div>' : '') +
       '<div class="small muted">' +
         (bmi ? 'BMI ' + N.fmt(bmi) + '（' + bmiLabel(bmi) + '）' : 'BMIは身長の設定後に表示されます') +
         (diff != null ? ' ／ 前回比 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg' : '') +
@@ -125,7 +125,7 @@
   }
 
   /* ---- トイレ(ワンタップ) ---- */
-  function toiletCard(rec, st) {
+  function toiletCard(rec, st, history) {
     var types = (st.toiletTypes || []).filter(function (t) { return t !== '大'; });
     if (!types.length) types = ['小'];
     var counts = {};
@@ -142,9 +142,17 @@
     h += '</div>';
     if (rec.toilet.length) {
       var list = rec.toilet.slice().sort(function (a, b) { return a.t < b.t ? -1 : 1; });
+      var timeline = toiletTimeline(rec, history);
       h += '<div style="margin-top:10px">';
       list.forEach(function (x, i) {
-        var interval = i ? toiletInterval(list[i - 1].t, x.t) : '';
+        var at = -1, previous = null;
+        for (var ti = 0; ti < timeline.length; ti++) {
+          if (timeline[ti].item === x && timeline[ti].date === rec.date) { at = ti; break; }
+        }
+        for (var pi = at - 1; pi >= 0; pi--) {
+          if (timeline[pi].type === x.type) { previous = timeline[pi]; break; }
+        }
+        var interval = previous ? toiletInterval(previous.date, previous.t, rec.date, x.t) : '';
         h += '<div class="log-line"><span>' + A().esc(x.t) + ' ・ ' + A().esc(x.type) +
           (interval ? ' <span class="toilet-interval">（前回から ' + interval + '）</span>' : '') + '</span>' +
           '<button class="tiny muted" data-delToilet="' + i + '" style="text-decoration:underline">削除</button></div>';
@@ -156,17 +164,43 @@
     return h + '</section>';
   }
 
-  function toiletInterval(previous, current) {
-    function minutes(value) {
-      var m = /^(\d{1,2}):(\d{2})$/.exec(String(value || ''));
-      if (!m) return null;
-      var h = Number(m[1]), min = Number(m[2]);
-      return h < 24 && min < 60 ? h * 60 + min : null;
-    }
-    var from = minutes(previous), to = minutes(current);
+  function toiletTimeline(rec, history) {
+    var rows = (history || []).filter(function (row) { return row.date !== rec.date; });
+    rows.push(rec);
+    var out = [];
+    rows.forEach(function (row) {
+      (row.toilet || []).forEach(function (item, index) {
+        var stamp = toiletStamp(row.date, item.t);
+        if (stamp == null) return;
+        out.push({ date: row.date, t: item.t, type: item.type, item: item, index: index, stamp: stamp });
+      });
+    });
+    return out.sort(function (a, b) {
+      return a.stamp - b.stamp || a.index - b.index;
+    });
+  }
+
+  function toiletStamp(date, time) {
+    var dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+    var tm = /^(\d{1,2}):(\d{2})$/.exec(String(time || ''));
+    if (!dm || !tm) return null;
+    var h = Number(tm[1]), min = Number(tm[2]);
+    if (h >= 24 || min >= 60) return null;
+    var d = new Date(Number(dm[1]), Number(dm[2]) - 1, Number(dm[3]), h, min, 0, 0);
+    return isFinite(d.getTime()) ? d.getTime() : null;
+  }
+
+  function toiletInterval(previousDate, previousTime, currentDate, currentTime) {
+    // 日付を含む絶対時刻で比較し、前日以前の「小」からの間隔も表示する。
+    var from = toiletStamp(previousDate, previousTime);
+    var to = toiletStamp(currentDate, currentTime);
     if (from == null || to == null || to < from) return '';
-    var diff = to - from, hours = Math.floor(diff / 60), mins = diff % 60;
-    return (hours ? hours + '時間' : '') + (mins || !hours ? mins + '分' : '');
+    var diff = Math.round((to - from) / 60000);
+    var days = Math.floor(diff / 1440);
+    diff %= 1440;
+    var hours = Math.floor(diff / 60), mins = diff % 60;
+    return (days ? days + '日' : '') + (hours ? hours + '時間' : '') +
+      (mins || (!days && !hours) ? mins + '分' : '');
   }
 
   function memoCard(rec) {
@@ -178,10 +212,11 @@
   /* ---------------- 保存とイベント ---------------- */
   function bind(view, state, rec, st, history) {
     function save(patch, rerender) {
+      var restoreScroll = rerender ? window.scrollY : null;
       for (var k in patch) rec[k] = patch[k];
       rec.date = state.date;
       return S.Body.put(rec).then(function () {
-        if (rerender) A().render();
+        if (rerender) A().render({ restoreScroll: restoreScroll });
       });
     }
 

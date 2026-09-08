@@ -119,8 +119,29 @@
   }
 
   /* ---------- 描画 ---------- */
-  var rendering = false, pending = false;
-  function render() {
+  var rendering = false, pending = false, pendingScroll = null;
+
+  function maxInputDate() {
+    return S.shiftYmd(S.ymd(new Date()), 1);
+  }
+
+  function updateDateControls() {
+    document.getElementById('dateLabel').textContent = dateLabel(state.date);
+    var next = document.getElementById('dateNext');
+    var blocked = state.date >= maxInputDate();
+    next.disabled = blocked;
+    next.setAttribute('aria-disabled', blocked ? 'true' : 'false');
+  }
+
+  function render(opts) {
+    opts = opts || {};
+    var restoreScroll = typeof opts.restoreScroll === 'number' ? opts.restoreScroll : null;
+    // 描画中の要求は、現在の #view を先に空にせず次回へまとめる。
+    if (rendering) {
+      pending = true;
+      if (restoreScroll != null) pendingScroll = restoreScroll;
+      return Promise.resolve();
+    }
     // 各画面は #view に click リスナーを付けるので、描画のたびに要素ごと差し替えて
     // リスナーが積み上がらないようにする
     var old = document.getElementById('view');
@@ -128,18 +149,32 @@
     old.parentNode.replaceChild(view, old);
 
     var v = Views[state.tab];
-    document.getElementById('dateLabel').textContent = dateLabel(state.date);
-    if (!v) { view.innerHTML = '<div class="card">画面が見つかりません</div>'; return; }
-    // 描画中に次の要求が来たら捨てずに積んでおき、終わったら最新状態で描き直す
-    if (rendering) { pending = true; return; }
+    updateDateControls();
+    if (!v) {
+      view.innerHTML = '<div class="card">画面が見つかりません</div>';
+      return Promise.resolve();
+    }
     rendering = true;
-    Promise.resolve(v.render(view, state)).catch(function (err) {
+    return Promise.resolve(v.render(view, state)).catch(function (err) {
       view.innerHTML = '<div class="card"><b>表示エラー</b><div class="small muted">' +
         esc(String((err && err.message) || err)) + '</div></div>';
     }).then(function () {
       rendering = false;
-      if (pending) { pending = false; render(); }
+      if (pending) {
+        var nextScroll = pendingScroll != null ? pendingScroll : restoreScroll;
+        pending = false; pendingScroll = null;
+        return render(nextScroll == null ? {} : { restoreScroll: nextScroll });
+      }
+      if (restoreScroll != null) {
+        requestAnimationFrame(function () {
+          window.scrollTo(0, Math.max(0, restoreScroll));
+        });
+      }
     });
+  }
+
+  function renderPreservingScroll() {
+    return render({ restoreScroll: window.scrollY });
   }
 
   function setTab(tab) {
@@ -153,8 +188,19 @@
   }
 
   function setDate(ymd) {
+    ymd = String(ymd || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd) || S.ymd(S.parseYmd(ymd)) !== ymd) {
+      toast('日付の形式が正しくありません');
+      return false;
+    }
+    if (ymd > maxInputDate()) {
+      toast('入力・表示できる未来日は明日までです');
+      updateDateControls();
+      return false;
+    }
     state.date = ymd;
     render();
+    return true;
   }
 
   /* ---------- 起動 ---------- */
@@ -168,7 +214,7 @@
     document.getElementById('dateLabel').addEventListener('click', function () {
       var body = openSheet('日付を選ぶ',
         '<label class="fld"><span>日付</span><input type="date" id="pickDate" value="' +
-        esc(state.date) + '"></label>' +
+        esc(state.date) + '" max="' + maxInputDate() + '"></label>' +
         '<button class="btn wide" id="pickToday">今日に戻る</button>');
       body.querySelector('#pickDate').addEventListener('change', function (e) {
         if (e.target.value) { closeSheet(); setDate(e.target.value); }
@@ -247,7 +293,8 @@
   }
 
   global.App = {
-    state: state, render: render, setTab: setTab, setDate: setDate,
+    state: state, render: render, renderPreservingScroll: renderPreservingScroll,
+    setTab: setTab, setDate: setDate, maxInputDate: maxInputDate,
     esc: esc, toast: toast, openSheet: openSheet, closeSheet: closeSheet,
     pushSheet: pushSheet, backSheet: backSheet, dropSheet: dropSheet,
     reloadSettings: reloadSettings, weightFor: weightFor, targetsFor: targetsFor,

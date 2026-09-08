@@ -32,10 +32,12 @@
         S.Exercise.byDate(state.date),
         A().targetsFor(state.date),
         S.dayTotals(state.date, entries),
-        S.MyFoods.all()
+        S.MyFoods.all(),
+        S.Body.get(state.date)
       ]);
     }).then(function (r) {
       var entries = r[0], exercises = r[1], tinfo = r[2], dt = r[3], myfoods = r[4];
+      var mealTimes = (r[5] && r[5].mealTimes) || {};
       var tg = tinfo.tg;
       var totals = dt.totals;
       var burned = exercises.reduce(function (a, x) { return a + (x.kcal || 0); }, 0);
@@ -54,7 +56,8 @@
         var html = summaryHtml(totals, tg, burned,
           (!dt.imported && noPfc) ? noPfc : 0, real.length, sources);
         SLOTS.forEach(function (sl) {
-          html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }), linkedNames);
+          html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }), linkedNames,
+            mealTimes[sl.key] || '');
         });
         html += exerciseHtml(exercises, burned);
         html += '<div class="tiny muted" style="padding:4px 2px 0">栄養値の出典: ' +
@@ -78,10 +81,11 @@
           '<div class="sum-meta"><div class="sum-goal">目標 ' + goal + ' kcal</div>' +
             '<span class="sum-action">採点を見る ›</span></div>' +
         '</div>' +
-        summarySourceBar(sources, kcal, goal, over) +
-        '<div class="source-legend summary-source-legend" aria-label="摂取カロリーの内訳">' +
-          '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
-          '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>' +
+        '<div class="summary-source-panel">' + summarySourceBar(sources, kcal, goal, over) +
+          '<div class="source-legend summary-source-legend" aria-label="摂取カロリーの内訳">' +
+            '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
+            '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>' +
+        '</div>' +
         '<div class="sum-goal">' +
           (burned ? '運動 -' + burned + ' kcal ／ ' : '') +
           (over ? 'あと ' + Math.abs(rest) + ' kcal オーバー' : 'あと ' + rest + ' kcal') +
@@ -128,12 +132,15 @@
       '<span>' + label + '</span></div>';
   }
 
-  function slotHtml(sl, allItems, linkedNames) {
+  function slotHtml(sl, allItems, linkedNames, mealTime) {
     var skipped = allItems.some(S.isSkip);
     var items = allItems.filter(S.notSkip);
     var kcal = items.reduce(function (a, e) { return a + ((e.nutrients && e.nutrients.kcal) || 0); }, 0);
     var h = '<div class="card" data-slot="' + sl.key + '">' +
-      '<div class="slot-head"><span class="slot-name">' + sl.icon + ' ' + sl.name + '</span>' +
+      '<div class="slot-head"><span class="slot-title"><span class="slot-name">' + sl.icon + ' ' + sl.name + '</span>' +
+      '<button type="button" class="meal-time' + (mealTime ? ' is-set' : '') + '" data-mealtime="' + sl.key +
+      '" aria-label="' + sl.name + 'の食事時間を' + (mealTime ? '変更' : '設定') + '">🕒 ' +
+      A().esc(mealTime || '時間設定') + '</button></span>' +
       '<span class="slot-kcal">' + (skipped ? '食べなかった' : Math.round(kcal) + ' kcal') +
       '</span></div>';
     if (skipped) {
@@ -203,11 +210,15 @@
   function bind(view, state) {
     view.addEventListener('click', function (ev) {
       var t = ev.target.closest(
-        '[data-open-score],[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip],[data-combo-from]');
+        '[data-open-score],[data-add],[data-scan],[data-entry],[data-addex],[data-ex],[data-skip],[data-unskip],[data-combo-from],[data-mealtime]');
       if (!t) return;
       if (t.hasAttribute('data-open-score')) return A().setTab('advice');
+      if (t.dataset.mealtime) return openMealTime(state, t.dataset.mealtime);
       if (t.dataset.skip) {
-        return S.Entries.setSkipped(state.date, t.dataset.skip, true).then(function () {
+        return Promise.all([
+          S.Entries.setSkipped(state.date, t.dataset.skip, true),
+          S.Body.setMealTime(state.date, t.dataset.skip, '')
+        ]).then(function () {
           A().toast(slotName(t.dataset.skip) + 'を「食べなかった」にしました');
           A().render();
         });
@@ -234,6 +245,37 @@
       if (t.dataset.entry) return openEntry(state, t.dataset.entry);
       if (t.dataset.addex) return openExercise(state, null);
       if (t.dataset.ex) return openExercise(state, t.dataset.ex);
+    });
+  }
+
+  function currentTime() {
+    var d = new Date();
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+
+  function openMealTime(state, slot) {
+    S.Body.get(state.date).then(function (rec) {
+      var current = rec && rec.mealTimes && rec.mealTimes[slot];
+      var body = A().openSheet(slotName(slot) + 'の食事時間',
+        '<div class="card meal-time-sheet"><p class="small muted">食べ始めた時刻を選んでください。iPhoneでは時刻のロールが開きます。</p>' +
+        '<label class="fld"><span>食事時間</span><input type="time" id="mealTimeInput" value="' +
+        A().esc(current || currentTime()) + '"></label>' +
+        '<button class="btn wide" id="mealTimeSave">この時間を保存</button>' +
+        (current ? '<button class="btn sub wide" id="mealTimeClear" style="margin-top:8px">時間を消す</button>' : '') +
+        '</div>');
+      body.querySelector('#mealTimeSave').addEventListener('click', function () {
+        var value = body.querySelector('#mealTimeInput').value;
+        if (!value) { A().toast('食事時間を選んでください'); return; }
+        S.Body.setMealTime(state.date, slot, value).then(function () {
+          A().closeSheet(); A().toast('食事時間を ' + value + ' にしました'); A().render();
+        }).catch(function (e) { A().toast(e.message); });
+      });
+      var clear = body.querySelector('#mealTimeClear');
+      if (clear) clear.addEventListener('click', function () {
+        S.Body.setMealTime(state.date, slot, '').then(function () {
+          A().closeSheet(); A().toast('食事時間を消しました'); A().render();
+        });
+      });
     });
   }
 
@@ -619,7 +661,9 @@
             ref: i.ref || { type: 'combo', id: c.id }, seq: seq + idx
           };
         });
-        return Promise.all([S.Entries.putMany(records), S.Combos.put(c)]);
+        var timeJob = state.date === S.ymd(new Date())
+          ? S.Body.setMealTime(state.date, slot, currentTime(), true) : Promise.resolve();
+        return Promise.all([S.Entries.putMany(records), S.Combos.put(c), timeJob]);
       }).then(function () {
         return S.Combos.touch(c.id);
       }).then(function () {
@@ -1008,6 +1052,11 @@
           est: result.est || undefined, ref: pick.ref
         };
         return S.Entries.put(rec).then(function () {
+          if (!existingId && state.date === S.ymd(new Date())) {
+            return S.Body.setMealTime(state.date, slot, currentTime(), true);
+          }
+          return null;
+        }).then(function () {
           if (pick.ref && pick.ref.type === 'my') S.MyFoods.touch(pick.ref.id);
           A().render();
           // 続けて何品も足せるよう、閉じずに1つ前(検索一覧)へ戻る

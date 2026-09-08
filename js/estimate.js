@@ -115,6 +115,39 @@
     });
   }
 
+  function ruleGrams(rule, opts) {
+    opts = opts || {};
+    var amount = Number(opts.amount);
+    if (!finite(amount) || amount <= 0) return null;
+    if (opts.unit === 'g') return amount;
+    if (finite(rule.grams) && rule.grams > 0) return rule.grams * amount;
+    return null;
+  }
+
+  // 主食を含む料理は単一食材へ置き換えず、成分表の複数食材モデルで補う。
+  function recipeNutrients(rule, model) {
+    if (!Array.isArray(rule.recipe) || !rule.recipe.length) return null;
+    var total = {}, refs = [];
+    rule.recipe.forEach(function (part) {
+      var food = model.byId[String(part.ref || '')], grams = Number(part.grams);
+      if (!food || !finite(grams) || grams <= 0) return;
+      refs.push(String(part.ref));
+      F.KEYS.forEach(function (key) {
+        if (!finite(food[key])) return;
+        total[key] = (total[key] || 0) + food[key] * grams / 100;
+      });
+    });
+    return refs.length ? { nutrients: total, refs: refs } : null;
+  }
+
+  function addFromRecipe(out, recipe, scale, added) {
+    F.KEYS.forEach(function (key) {
+      if (key === 'kcal' || finite(out[key]) || !finite(recipe[key])) return;
+      out[key] = round(recipe[key] * scale);
+      added.push(key);
+    });
+  }
+
   function addPerKcal(out, perKcal, kcal, added) {
     F.KEYS.forEach(function (k) {
       if (k === 'kcal' || finite(out[k]) || !finite(perKcal[k])) return;
@@ -195,8 +228,20 @@
       var needsNutrients = F.KEYS.some(function (k) { return k !== 'kcal' && !finite(out[k]); });
       if (!needsNutrients) return null;
 
+      if (rule && rule.recipe) {
+        var recipe = recipeNutrients(rule, model);
+        if (recipe && finite(recipe.nutrients.kcal) && recipe.nutrients.kcal > 0) {
+          var recipeScale = out.kcal / recipe.nutrients.kcal;
+          addFromRecipe(out, recipe.nutrients, recipeScale, added);
+          return finish(out, known, added, {
+            conf: 'high', ref: recipe.refs.join('+'), cat: rule.cat || '', method: 'recipe'
+          }, opts.est);
+        }
+      }
+
       if (rule && rule.ref && model.byId[rule.ref]) {
-        var grams = fitGrams(out, model.byId[rule.ref]);
+        var grams = ruleGrams(rule, opts);
+        if (grams == null) grams = fitGrams(out, model.byId[rule.ref]);
         if (grams != null) {
           addFromFood(out, model.byId[rule.ref], grams, added);
           return finish(out, known, added, {

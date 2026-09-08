@@ -294,6 +294,11 @@
   };
 
   /* ---------------- カラダ記録 ---------------- */
+  function blankBody(date) {
+    return { date: date, weight: null, bodyFat: null, steps: null, custom: {},
+      bowel: '', toilet: [], mealTimes: {}, memo: '' };
+  }
+
   var Body = {
     get: function (date) {
       return run('body', 'readonly', function (s) { return reqp(s.get(date)); });
@@ -301,13 +306,30 @@
     put: function (rec) {
       return run('body', 'readwrite', function (s) { return reqp(s.put(rec)); });
     },
+    // 食事区分ごとの時刻だけを同一トランザクションで更新する。
+    // カラダ画面の入力と競合しても、体重・歩数など既存の値を失わない。
+    setMealTime: function (date, slot, value, onlyIfEmpty) {
+      value = String(value || '');
+      if (value && !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+        return Promise.reject(new Error('食事時間の形式が正しくありません'));
+      }
+      return run('body', 'readwrite', function (s) {
+        return reqp(s.get(date)).then(function (rec) {
+          rec = rec || blankBody(date);
+          rec.mealTimes = Object.assign({}, rec.mealTimes || {});
+          if (onlyIfEmpty && rec.mealTimes[slot]) return rec;
+          if (value) rec.mealTimes[slot] = value;
+          else delete rec.mealTimes[slot];
+          return reqp(s.put(rec)).then(function () { return rec; });
+        });
+      });
+    },
     // 部分更新を同一トランザクションで行い、体重やメモなどを保持する。
     importSteps: function (rows) {
       return run('body', 'readwrite', function (s) {
         return Promise.all(rows.map(function (row) {
           return reqp(s.get(row.date)).then(function (rec) {
-            rec = rec || { date: row.date, weight: null, bodyFat: null, custom: {},
-              bowel: '', toilet: [], memo: '' };
+            rec = rec || blankBody(row.date);
             rec.steps = row.steps;
             return reqp(s.put(rec));
           });

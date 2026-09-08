@@ -73,6 +73,9 @@
     Object.keys(RDA).forEach(function (k) {
       t[k] = { goal: RDA[k][sexIdx], kind: 'min' };
     });
+    // 成人のビタミンAは推奨量だけでなく耐容上限量もある。レバー摂取時に
+    // 「足りている」だけで終わらず、過剰域を判定できるようにする。
+    t.vita = { goal: RDA.vita[sexIdx], max: 2700, kind: 'band' };
     Object.keys(LIMIT).forEach(function (k) {
       t[k] = { goal: LIMIT[k][sexIdx], kind: 'max' };
     });
@@ -99,6 +102,11 @@
       return clamp(1 - Math.max(0, dev - 0.10) * 3, 0, 1);
     }
     if (kind === 'min') return clamp(r, 0, 1);
+    if (kind === 'band') {
+      if (intake < goal) return clamp(r, 0, 1);
+      if (intake <= max) return 1;
+      return clamp(1 - (intake / max - 1) * 1.5, 0, 1);
+    }
     // max: 上限までは満点、超えた分だけ急に減点
     var lim = max || goal;
     var rr = intake / lim;
@@ -167,7 +175,7 @@
 
     // 不足しているもの(比率の低い順)
     var lacks = d.filter(function (x) {
-      return x.key !== 'exercise' && !x.excluded && x.kind === 'min' && x.ratio < 0.8 &&
+      return x.key !== 'exercise' && !x.excluded && (x.kind === 'min' || x.kind === 'band') && x.ratio < 0.8 &&
         (ctx && ctx.hasEntries);
     }).sort(function (a, b) { return a.ratio - b.ratio; }).slice(0, 3);
     lacks.forEach(function (x) {
@@ -183,13 +191,13 @@
 
     // 摂りすぎているもの
     var overs = d.filter(function (x) {
-      return !x.excluded && x.kind === 'max' && x.intake > (x.max || x.goal);
+      return !x.excluded && (x.kind === 'max' || x.kind === 'band') && x.intake > (x.max || x.goal);
     }).sort(function (a, b) { return b.ratio - a.ratio; }).slice(0, 3);
     overs.forEach(function (x) {
       var m = global.Foods.meta(x.key);
       var lim = x.max || x.goal;
       out.push({
-        icon: '🧂',
+        icon: x.key === 'vita' ? '⚠️' : '🧂',
         text: (x.estimated > 0 ? '推定を含む目安では、' : '') + m[0] +
           (x.estimated > 0 ? 'が目安を超えている可能性があります（' : 'が目安を超えています（') +
           fmt(x.intake) + ' / ' + fmt(lim) + ' ' + m[1] + '）。' + overText(x.key)
@@ -227,6 +235,7 @@
     salt: '汁物を残す、麺類のつゆを飲み干さない、調味料をかけすぎないのが効果的です。',
     satfat: 'バター・生クリーム・脂身の多い肉を控えめに。',
     chol: '卵黄・レバー・魚卵の量を調整しましょう。',
+    vita: 'レバーは少量でも多く含むため、続けて大量に食べるのは控えめにしましょう。',
     carb: '主食の量を1〜2割減らすと収まります。'
   };
   function suggestText(k) { return SUGGEST[k] || ''; }

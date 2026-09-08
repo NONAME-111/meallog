@@ -343,7 +343,7 @@
     var byKey = {};
     sc.detail.forEach(function (d) { byKey[d.key] = d; });
     var h = '<div class="card score-groups"><div class="row between"><h3>採点と摂取量</h3>' +
-      '<span class="tiny muted">主な項目を常に表示</span></div>' + sourceLegend();
+      '<span class="tiny muted score-guide">縦線＝目安・主な項目を常に表示</span></div>' + sourceLegend();
     GROUPS.forEach(function (group) {
       var sum = 0, included = 0;
       group.scored.forEach(function (key) {
@@ -355,8 +355,7 @@
       var color = points == null ? 'muted' : pct >= 80 ? 'ok' : pct >= 60 ? 'high' : 'bad';
       h += '<section class="score-group" data-score-section="' + group.key + '"><div class="score-group-head score-group-static"><span class="score-group-title"><span>' + group.icon + '</span><b>' +
         group.label + '</b></span><span class="score-group-result ' + color + '">' +
-        (points == null ? '対象外' : N.fmt(points) + ' / ' + group.weight + '点') + '</span></div>' +
-        '<div class="score-group-bar"><i class="' + color + '" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></i></div>';
+        (points == null ? '対象外' : N.fmt(points) + ' / ' + group.weight + '点') + '</span></div>';
       h += '<div class="score-group-body">';
       group.shown.forEach(function (key) {
         h += nutrientRow(key, byKey[key], totals, tg, coverage, estimated, activity, sources);
@@ -384,9 +383,8 @@
       '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>';
   }
 
-  function sourceBar(key, sources, ratio) {
+  function sourceBar(key, sources, width) {
     var row = sources && sources[key];
-    var width = Math.max(0, Math.min(100, ratio * 100));
     var sum = row ? SOURCE_TYPES.reduce(function (total, type) { return total + (row[type] || 0); }, 0) : 0;
     if (!sum) return '<i class="src-normal" style="width:' + width + '%"></i>';
     return SOURCE_TYPES.map(function (type) {
@@ -395,31 +393,71 @@
     }).join('');
   }
 
+  function barSpec(target, value) {
+    var goal = Number(target.goal) || 0;
+    var upper = Number(target.max) || goal;
+    var ceiling = target.kind === 'band' ? upper * 1.25 : upper * 1.4;
+    if (!ceiling) ceiling = 1;
+    var fill = Math.max(0, Math.min(100, Number(value || 0) / ceiling * 100));
+    var markers = [];
+    if (target.kind === 'band') {
+      markers.push({ pct: goal / ceiling * 100, cls: 'lower' });
+      markers.push({ pct: upper / ceiling * 100, cls: 'upper' });
+    } else {
+      markers.push({ pct: upper / ceiling * 100, cls: 'goal' });
+    }
+    return { fill: fill, markers: markers };
+  }
+
+  function targetMarkers(spec) {
+    return spec.markers.map(function (marker) {
+      return '<u class="nut-target-line ' + marker.cls + '" style="left:' + marker.pct + '%" aria-hidden="true"></u>';
+    }).join('');
+  }
+
+  function targetText(target) {
+    if (target.kind === 'band') return N.fmt(target.goal) + '以上・' + N.fmt(target.max) + '以下';
+    if (target.kind === 'min') return N.fmt(target.goal) + '以上';
+    if (target.kind === 'max') return N.fmt(target.max || target.goal) + '以下';
+    return N.fmt(target.goal) + '目安';
+  }
+
   function nutrientRow(key, detail, totals, tg, coverage, estimated, activity, sources) {
     var meta = F.meta(key), target = tg[key], value = detail ? detail.intake : totals[key];
     var known = typeof value === 'number' && isFinite(value);
     var cov = detail ? detail.coverage : (coverage && typeof coverage[key] === 'number' ? coverage[key] : (known ? 1 : 0));
     var est = detail ? detail.estimated : (estimated && estimated[key]) || 0;
     var limit = target ? (target.max || target.goal) : null;
-    var ratio = known && limit ? value / limit : 0;
+    var ratio = known && target && target.goal ? value / target.goal : 0;
+    var limitRatio = known && limit ? value / limit : 0;
     var cls = 'ok';
     if (!known || (detail && detail.excluded)) cls = 'muted';
-    else if (target && target.kind === 'min') cls = ratio >= 1 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad');
-    else if (target && target.kind === 'max') cls = ratio <= 1 ? 'ok' : (ratio <= 1.3 ? 'high' : 'bad');
+    else if (target && target.kind === 'min') cls = ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad');
+    else if (target && target.kind === 'max') cls = limitRatio <= 1 ? 'ok' : (limitRatio <= 1.3 ? 'high' : 'bad');
+    else if (target && target.kind === 'band') {
+      cls = value >= target.goal && value <= target.max ? 'ok' :
+        (value < target.goal ? (ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad')) :
+          (limitRatio <= 1.3 ? 'high' : 'bad'));
+    }
     else if (target) cls = Math.abs(ratio - 1) <= 0.1 ? 'ok' : (Math.abs(ratio - 1) <= 0.25 ? 'high' : 'bad');
-    var clickable = detail && !detail.excluded && detail.kind === 'min' && detail.ratio < 1 && key !== 'exercise';
+    var clickable = detail && !detail.excluded && (detail.kind === 'min' || detail.kind === 'band') &&
+      detail.ratio < 1 && key !== 'exercise';
     var tag = clickable ? 'button' : 'div';
     var h = '<' + tag + ' class="nut-detail' + (clickable ? ' tappable' : '') +
       '" data-nutrient="' + key + '"' +
       (clickable ? ' data-rich="' + key + '"' : '') + '><div class="nut-detail-top"><span class="nut-name">' +
       A().esc(meta[0]) + '</span><span class="nut-val"><b>' + (est > 0 ? '約' : '') +
       (known ? N.fmt(value) : '—') + '</b> ' + A().esc(meta[1]);
-    if (target) h += ' <span class="muted">/ ' + N.fmt(limit) + (target.kind === 'min' ? '以上' : target.kind === 'max' ? '以下' : '') + '</span>';
+    if (target) h += ' <span class="muted">/ ' + targetText(target) + '</span>';
     h += '</span></div>';
-    if (target) h += key === 'exercise'
-      ? '<div class="nut-bar"><i class="' + cls + '" style="width:' +
-        Math.max(0, Math.min(100, ratio * 100)) + '%"></i></div>'
-      : '<div class="nut-bar source-stack">' + sourceBar(key, sources, ratio) + '</div>';
+    if (target) {
+      var spec = barSpec(target, known ? value : 0);
+      h += key === 'exercise'
+        ? '<div class="nut-bar"><i class="' + cls + '" style="width:' + spec.fill + '%"></i>' +
+          targetMarkers(spec) + '</div>'
+        : '<div class="nut-bar source-stack">' + sourceBar(key, sources, spec.fill) +
+          targetMarkers(spec) + '</div>';
+    }
     h += '<div class="nut-flags">' + (detail && detail.excluded ? '<span>採点対象外</span>' : '') +
       (key !== 'exercise' && cov < 0.999 ? '<span>カバー ' + Math.round(cov * 100) + '%</span>' : '') +
       (est > 0 ? '<span>推定 ' + Math.round(est * 100) + '%</span>' : '') +
