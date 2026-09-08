@@ -1150,7 +1150,7 @@
       (preset.barcode ? '<div class="card small">バーコード <b>' + A().esc(preset.barcode) +
         '</b><div class="tiny muted">保存すると次回から自動で呼び出せます</div></div>' : '') +
       '<button class="btn wide" id="mSave">保存して記録する</button>' +
-      (preset.myFoodId ? '<button class="btn sub wide" id="mUnlink" style="margin-top:8px;color:var(--red)">' +
+      (preset.myFoodId ? '<button class="btn sub wide" id="mUnlink" style="margin-top:8px;color:var(--danger-text)">' +
         'この食品との紐付けを解除</button>' : '');
 
     var body = A().openSheet(preset.myFoodId ? '栄養素を編集' : '食品を手入力', html);

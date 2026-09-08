@@ -287,7 +287,45 @@
     return MODEL ? supplement(name, MODEL) : false;
   }
 
+  /*
+     v14より前は「若どりレバー」も汎用のレバー(食品番号11197)として
+     補完されていた。保存済み記録のうち、その旧推定値だけを取り除き、
+     鶏肝(11232)として再計算する。実測・手入力値とkcalは上書きしない。
+  */
+  function legacyChickenLiver(record) {
+    if (!record || !record.name || !record.nutrients || !record.est) return false;
+    var name = String(record.name);
+    if (!/(?:若どり|若鶏|鶏)\s*レバー/.test(name)) return false;
+    var keys = record.est.keys;
+    if (!Array.isArray(keys) || !keys.length) return false;
+    return String(record.est.ref || '') === '11197' || String(record.est.cat || '') === 'レバー';
+  }
+
+  function recalibrateChickenLiver(record, opts) {
+    if (!legacyChickenLiver(record)) return Promise.resolve(null);
+    opts = opts || {};
+    var estimated = record.est.keys || [], known = {};
+    for (var key in record.nutrients) {
+      if (key === 'kcal' || estimated.indexOf(key) === -1) known[key] = record.nutrients[key];
+    }
+    return fill(record.name, known, {
+      unit: opts.unit || record.unit || 'g',
+      amount: opts.amount == null ? (record.amount || 1) : opts.amount,
+      est: null
+    }).then(function (filled) {
+      if (!filled || String(filled.est && filled.est.ref || '') !== '11232') return null;
+      var next = {};
+      for (var k in record) next[k] = record[k];
+      next.nutrients = filled.nutrients;
+      next.est = filled.est;
+      return next;
+    });
+  }
+
   global.Estimate = {
-    load: load, fill: fill, isExcluded: isExcluded, isSupplement: isSupplement, MODEL_VERSION: 1
+    load: load, fill: fill, isExcluded: isExcluded, isSupplement: isSupplement,
+    isLegacyChickenLiver: legacyChickenLiver,
+    recalibrateChickenLiver: recalibrateChickenLiver,
+    MODEL_VERSION: 2
   };
 })(window);

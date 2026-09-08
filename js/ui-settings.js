@@ -69,7 +69,7 @@
     var months = (w - st.goalWeight) / pace;
     var d = new Date();
     d.setMonth(d.getMonth() + Math.ceil(months));
-    return '<div class="small" style="margin-top:8px;color:var(--green)">このペースなら約 ' +
+    return '<div class="small" style="margin-top:8px;color:var(--accent-text)">このペースなら約 ' +
       (Math.round(months * 10) / 10) + " か月後（" + (d.getFullYear()) + '年' + (d.getMonth() + 1) +
       '月ごろ）に目標体重に到達する計算です。</div>';
   }
@@ -88,7 +88,7 @@
           Math.round((m.nutrients && m.nutrients.kcal) || 0) + ' kcal' +
           (m.barcode ? ' ・ ' + A().esc(m.barcode) : '') + '</span></span>' +
           '<button class="tiny" data-delmy="' + A().esc(m.id) + '" ' +
-          'style="color:var(--red);text-decoration:underline;flex:none">' +
+          'style="color:var(--danger-text);text-decoration:underline;flex:none">' +
           (m.linked ? '紐付け解除' : '削除') + '</button></div>';
       });
       if (my.length > 30) h += '<div class="tiny muted" style="margin-top:6px">ほか ' + (my.length - 30) + ' 件</div>';
@@ -122,7 +122,7 @@
       '実測値は変更せず、推定した項目には印を付けます。件数が多いと数十秒かかります。</div>' +
       '<button class="btn line wide" id="btnEnrich">記録に栄養素を補う</button>' +
       '<div class="tiny muted" id="enrichProgress" role="status" hidden style="margin-top:8px"></div>' +
-      '<button class="btn sub wide" id="btnWipe" style="margin-top:14px;color:var(--red)">すべての記録を消す</button>' +
+      '<button class="btn sub wide" id="btnWipe" style="margin-top:14px;color:var(--danger-text)">すべての記録を消す</button>' +
       '</div>';
   }
 
@@ -254,6 +254,11 @@
         return S.migrateToilet();
       }).then(function () {
         return S.migrateExerciseGoal();
+      }).then(function () {
+        // バックアップ側の完了フラグが古い記録と食い違っていても再検査する。
+        return S.Settings.save({ chickenLiver11232Migrated: 0 });
+      }).then(function () {
+        return S.migrateChickenLiver().catch(function () { return null; });
       }).then(function () {
         return A().reloadSettings();
       }).then(function () {

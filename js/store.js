@@ -278,6 +278,14 @@
       return run('combos', 'readwrite', function (s) { return reqp(s.put(rec)); })
         .then(function () { return rec; });
     },
+    putMany: function (records) {
+      records = records || [];
+      if (!records.length) return Promise.resolve(records);
+      return run('combos', 'readwrite', function (s) {
+        records.forEach(function (rec) { s.put(rec); });
+        return records;
+      });
+    },
     remove: function (id) {
       return run('combos', 'readwrite', function (s) { return reqp(s.delete(id)); });
     },
@@ -326,6 +334,16 @@
     },
     // 部分更新を同一トランザクションで行い、体重やメモなどを保持する。
     importSteps: function (rows) {
+      // 同じ日が複数あっても最後の値1件へまとめる。既存値には加算せず、
+      // 日別合計を常に置き換える。
+      var byDate = {};
+      (rows || []).forEach(function (row) {
+        if (!row || !row.date || !Number.isFinite(Number(row.steps))) return;
+        byDate[row.date] = Math.max(0, Math.round(Number(row.steps)));
+      });
+      rows = Object.keys(byDate).map(function (date) {
+        return { date: date, steps: byDate[date] };
+      });
       return run('body', 'readwrite', function (s) {
         return Promise.all(rows.map(function (row) {
           return reqp(s.get(row.date)).then(function (rec) {
@@ -563,6 +581,7 @@
     toiletTypes: ['小'],
     toiletMigrated: 0,
     exerciseGoal322Migrated: 0, // 旧既定値200kcalを322kcalへ移した版
+    chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
     lastTab: 'meal',
     lastAddSrc: 'used',       // 追加シートで最後に見ていた区分
     lastHistSlot: '',         // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)
@@ -650,6 +669,75 @@
     });
   }
 
+  // 保存済みの旧「レバー」推定だけを鶏肝11232へ再較正する。
+  // 食事記録・マイ食品・食品セットを一緒に直し、再追加時の旧値流入も防ぐ。
+  function migrateChickenLiver() {
+    return Settings.get().then(function (st) {
+      if (st.chickenLiver11232Migrated) {
+        return { entries: 0, myfoods: 0, combos: 0, changed: 0, skipped: true };
+      }
+      var estimator = global.Estimate;
+      if (!estimator || !estimator.recalibrateChickenLiver) {
+        return Promise.reject(new Error('鶏レバーの較正処理を読み込めませんでした'));
+      }
+      return Promise.all([
+        estimator.load(), allEntries(), MyFoods.all(), Combos.all()
+      ]).then(function (r) {
+        var entries = r[1] || [], myfoods = r[2] || [], combos = r[3] || [];
+        var entryJobs = entries.filter(estimator.isLegacyChickenLiver).map(function (rec) {
+          return estimator.recalibrateChickenLiver(rec, {
+            unit: rec.unit || 'g', amount: rec.amount || 1
+          });
+        });
+        var foodJobs = myfoods.filter(estimator.isLegacyChickenLiver).map(function (rec) {
+          return estimator.recalibrateChickenLiver(rec, {
+            unit: rec.basis === 'serving' ? (rec.servingLabel || '食') : 'g',
+            amount: rec.basis === 'serving' ? 1 : 100
+          });
+        });
+        var comboJobs = combos.filter(function (combo) {
+          return (combo.items || []).some(estimator.isLegacyChickenLiver);
+        }).map(function (combo) {
+          var items = combo.items || [];
+          return Promise.all(items.map(function (item) {
+            return estimator.recalibrateChickenLiver(item, {
+              unit: item.unit || 'g', amount: item.amount || 1
+            });
+          })).then(function (nextItems) {
+            if (!nextItems.some(Boolean)) return null;
+            var next = {};
+            for (var key in combo) next[key] = combo[key];
+            next.items = items.map(function (item, i) { return nextItems[i] || item; });
+            return next;
+          });
+        });
+        return Promise.all([
+          Promise.all(entryJobs), Promise.all(foodJobs), Promise.all(comboJobs)
+        ]);
+      }).then(function (groups) {
+        var changedEntries = groups[0].filter(Boolean);
+        var changedFoods = groups[1].filter(Boolean);
+        var changedCombos = groups[2].filter(Boolean);
+        invalidate();
+        return run(['entries', 'myfoods', 'combos', 'settings'], 'readwrite', function (stores) {
+          changedEntries.forEach(function (rec) { stores[0].put(rec); });
+          changedFoods.forEach(function (rec) { stores[1].put(rec); });
+          changedCombos.forEach(function (rec) { stores[2].put(rec); });
+          st.chickenLiver11232Migrated = 1;
+          stores[3].put({ k: 'main', v: st });
+          return true;
+        }).then(function () {
+          var result = {
+            entries: changedEntries.length, myfoods: changedFoods.length,
+            combos: changedCombos.length,
+            changed: changedEntries.length + changedFoods.length + changedCombos.length
+          };
+          return result;
+        });
+      });
+    });
+  }
+
   /* ---------------- 全データ書き出し/取り込み ---------------- */
   function exportAll() {
     return Promise.all([
@@ -703,6 +791,7 @@
     isSkip: isSkip, notSkip: notSkip, backfillSkipped: backfillSkipped,
     exportAll: exportAll, importAll: importAll, wipeAll: wipeAll,
     migrateToilet: migrateToilet, migrateExerciseGoal: migrateExerciseGoal,
+    migrateChickenLiver: migrateChickenLiver,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

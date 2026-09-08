@@ -1,10 +1,11 @@
 :root{
   --green:#147a4b; --green-d:#0d613b; --green-l:#e7f4ed;
   --orange:#c85c00; --red:#b83a34; --blue:#006ead;
+  --accent-text:#0b5f3a; --warning-text:#8a3c00; --danger-text:#982f2f; --link-text:#005a9c;
   /* Okabe-Ito系の色相を使い、赤緑だけに頼らず凡例の文字でも区別する */
   --src-normal:#009e73;--src-sweets:#d55e00;--src-alcohol:#0072b2;--src-supplement:#e69f00;
   --bg:#f4f5f7; --card:#fff; --line:#e3e6ea;
-  --tx:#20242a; --tx2:#6b727d; --tx3:#9aa1ab;
+  --tx:#20242a; --tx2:#4f5863; --tx3:#66717d;
   --hdr:56px; --tabh:calc(54px + env(safe-area-inset-bottom));
   --r:12px;
 }
@@ -19,6 +20,8 @@ body{
 }
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 input,select,textarea{font:inherit;color:inherit}
+a{color:var(--link-text)}
+input::placeholder,textarea::placeholder{color:var(--tx3);opacity:1}
 
 /* ---- ヘッダ ---- */
 #appHeader{
@@ -32,7 +35,7 @@ input,select,textarea{font:inherit;color:inherit}
 .hdr-btn:disabled{opacity:.28;cursor:default}
 .hdr-center{display:flex;flex-direction:column;align-items:center;line-height:1.15}
 .date-label{color:#fff;font-weight:800;font-size:21px;letter-spacing:.01em}
-.ver{font-size:10px;opacity:.75}
+.ver{font-size:10px;opacity:.9}
 
 /* ---- タブバー ---- */
 #tabbar{
@@ -44,7 +47,7 @@ input,select,textarea{font:inherit;color:inherit}
 .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
   font-size:10px;color:var(--tx3)}
 .tab .ic{font-size:20px;line-height:1}
-.tab.is-active{color:var(--green);font-weight:700}
+.tab.is-active{color:var(--accent-text);font-weight:700}
 
 /* ---- 共通 ---- */
 #view{padding:10px 12px 24px}
@@ -88,8 +91,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
   border-radius:999px;font-size:10px;font-weight:700}
 .sum-main{display:flex;align-items:baseline;justify-content:space-between}
 .sum-kcal{font-size:30px;font-weight:800;line-height:1}
-.sum-unit{font-size:12px;opacity:.85;margin-left:3px}
-.sum-goal{font-size:12px;opacity:.9}
+.sum-unit{font-size:12px;opacity:1;margin-left:3px}
+.sum-goal{font-size:12px;opacity:1}
 .bar{height:7px;background:rgba(255,255,255,.3);border-radius:99px;overflow:hidden;margin:10px 0 4px}
 .bar > i{display:block;height:100%;background:#fff;border-radius:99px;transition:width .3s}
 .bar.over > i{background:#ffd8a8}
@@ -105,7 +108,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
   border:2px solid rgba(15,50,36,.28);border-radius:10px}
 .summary-source-panel .bar{height:11px;margin:0 0 6px;background:#dde2e7;border:1px solid #c7ced5}
 .summary-source-legend{margin:5px 0 2px;color:#3f4852}
-.summary-source-legend span{font-size:9px}
+.summary-source-legend span{font-size:10px}
 .pfc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
 .pfc div{background:#fff;color:#20242a;border:2px solid rgba(15,50,36,.28);
   border-radius:8px;padding:6px 8px;text-align:center}
@@ -132,7 +135,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .slot-name{font-weight:700;font-size:14px}
 .meal-time{padding:4px 7px;border:1.5px solid var(--line);border-radius:7px;color:var(--tx2);
   background:var(--card);font-size:11px;font-weight:700;white-space:nowrap}
-.meal-time.is-set{border-color:var(--green);color:var(--green-d)}
+.meal-time.is-set{border-color:var(--green);color:var(--accent-text)}
 .meal-time-sheet input[type=time]{font-size:22px;font-weight:700;text-align:center;min-height:54px}
 .slot-kcal{font-size:12px;color:var(--tx2)}
 .item{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
@@ -178,15 +181,15 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .score-group-static{cursor:default}
 .score-group-title{display:flex;align-items:center;gap:8px;font-size:14px}
 .score-group-result{font-size:12px;font-weight:700;white-space:nowrap}
-.score-group-result.ok{background:none;color:var(--green)}
-.score-group-result.high{background:none;color:var(--orange)}
-.score-group-result.bad{background:none;color:var(--red)}
+.score-group-result.ok{background:none;color:var(--accent-text)}
+.score-group-result.high{background:none;color:var(--warning-text)}
+.score-group-result.bad{background:none;color:var(--danger-text)}
 .score-group-result.muted{color:var(--tx3)}
 .score-group-result i{font-style:normal;color:var(--tx3);margin-left:3px}
 .nut-detail .nut-bar > i.muted{background:var(--line)}
 .score-group-body{margin-top:10px;padding:0 3px 0 5px;border-left:2px solid var(--line)}
 .score-more{border-top:1px solid var(--line);margin-top:3px;padding-top:5px}
-.score-more summary{padding:7px 5px;color:var(--green);font-size:12px;font-weight:700;cursor:pointer}
+.score-more summary{padding:7px 5px;color:var(--accent-text);font-size:12px;font-weight:700;cursor:pointer}
 .score-more-body{padding-left:5px}
 .nut-detail{display:block;width:100%;padding:9px 5px;border-top:1px solid var(--line);text-align:left}
 .nut-detail:first-child{border-top:0}
@@ -204,13 +207,15 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .src-sweets{background:var(--src-sweets)}
 .src-alcohol{background:var(--src-alcohol)}
 .src-supplement{background:var(--src-supplement)}
-.source-legend{display:flex;flex-wrap:wrap;gap:5px 11px;margin:10px 0 1px;color:var(--tx2);font-size:10px}
+.source-legend{display:flex;flex-wrap:wrap;gap:5px 11px;margin:10px 0 1px;color:var(--tx2);font-size:11px}
 .source-legend span{display:flex;align-items:center;gap:4px}
-.source-legend i{display:inline-block;width:10px;height:10px;border-radius:3px}
+.source-legend i{display:inline-block;width:12px;height:12px;border-radius:3px}
 .source-legend i{border:1px solid rgba(20,26,32,.22)}
+.nut-bar.source-stack > i + i,.summary .bar.source-stack > i + i{
+  box-shadow:inset 1px 0 rgba(255,255,255,.72)}
 .nut-flags{display:flex;gap:7px;justify-content:flex-end;min-height:15px;margin-top:4px;
   color:var(--tx3);font-size:10px}
-.nut-flags .rich-hint{color:var(--green);font-weight:600}
+.nut-flags .rich-hint{color:var(--accent-text);font-weight:600}
 .activity-breakdown{text-align:right;margin-top:3px}
 .exercise-connect{margin:8px 5px 2px;padding:9px;border-radius:8px;background:#f2f7f4;
   color:var(--tx2);font-size:11px}
@@ -220,23 +225,23 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .estimate-hint{margin:8px 2px;color:var(--tx2);font-size:12px}
 .nutrient-edit{margin:4px 0 10px;color:var(--tx2)}
 .tag.registered{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:999px;
-  color:var(--green);background:#e9f6ef;font-size:9px;font-weight:700;vertical-align:1px}
+  color:var(--accent-text);background:#e9f6ef;font-size:9px;font-weight:700;vertical-align:1px}
 .ocr-input{margin:9px 0 7px;min-height:118px;resize:vertical;line-height:1.5}
 .nut-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
 .nutrient-field input{padding:8px}
 .nut-more{border-top:1px solid var(--line);margin:3px 0 10px;padding-top:8px}
-.nut-more summary{padding:5px 0 9px;color:var(--green);font-size:13px;font-weight:700;cursor:pointer}
+.nut-more summary{padding:5px 0 9px;color:var(--accent-text);font-size:13px;font-weight:700;cursor:pointer}
 .step-method{margin-bottom:10px;padding:10px;border-radius:9px;background:var(--green-l)}
 .step-method p{margin:5px 0}
 .step-shortcut{margin:8px 0 12px;border:1px solid var(--line);border-radius:9px;padding:4px 10px}
-.step-shortcut summary{padding:7px 0;color:var(--green);font-weight:700;cursor:pointer}
+.step-shortcut summary{padding:7px 0;color:var(--accent-text);font-weight:700;cursor:pointer}
 .step-shortcut p{margin:6px 0}
 .health-file input[type=file]{display:block;width:100%;padding:10px;border:1.5px solid var(--line);
   border-radius:9px;background:var(--card);color:var(--tx)}
 .health-status{min-height:20px;margin:5px 0 8px;font-weight:700}
 .health-preview{display:grid;gap:3px;margin:7px 0;padding:10px;border:1.5px solid var(--line);
   border-radius:9px;background:var(--bg);font-size:12px}
-.health-preview b{color:var(--green-d);font-size:15px}
+.health-preview b,.health-preview strong{color:var(--accent-text);font-size:15px}
 
 /* ---- グラフ ---- */
 .chart-wrap{position:relative;width:100%;overflow-x:auto}
@@ -244,7 +249,7 @@ canvas.chart{width:100%;height:190px;display:block}
 
 /* ---- シート ---- */
 .sheet{position:fixed;inset:0;z-index:60}
-.sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
+.sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
 .sheet-panel{position:absolute;left:0;right:0;bottom:0;max-height:92vh;background:var(--card);
   border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0;display:flex;flex-direction:column;
   padding-bottom:env(safe-area-inset-bottom);animation:up .22s ease-out}
@@ -254,7 +259,7 @@ canvas.chart{width:100%;height:190px;display:block}
   border-radius:16px 16px 0 0}
 .sheet-head h2{flex:1;text-align:center;margin:0;font-size:15px;font-weight:700}
 .sheet-close{color:var(--tx2);font-size:14px;padding:4px}
-.sheet-action{color:var(--green);font-weight:700;font-size:14px;padding:4px}
+.sheet-action{color:var(--accent-text);font-weight:700;font-size:14px;padding:4px}
 .sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px}
 
 /* ---- スキャナ ---- */
@@ -277,11 +282,12 @@ canvas.chart{width:100%;height:190px;display:block}
 .tap-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tap-btn{background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:14px 8px;
   text-align:center;font-weight:700;font-size:14px}
-.tap-btn .cnt{display:block;font-size:22px;color:var(--green);margin-top:3px}
+.tap-btn .cnt{display:block;font-size:22px;color:var(--accent-text);margin-top:3px}
 .log-line{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:13px}
 
 @media (prefers-color-scheme: dark){
-  :root{--bg:#101419;--card:#1d242c;--line:#3a4551;--tx:#edf1f5;--tx2:#b0bac5;--tx3:#7f8995;--green-l:#1e3a2c}
+  :root{--bg:#101419;--card:#1d242c;--line:#3a4551;--tx:#edf1f5;--tx2:#c3ccd6;--tx3:#9eabb8;
+    --green-l:#1e3a2c;--accent-text:#8bdcaf;--warning-text:#ffc078;--danger-text:#ff9b94;--link-text:#8acbff}
   .seg{background:#252b32}
   .seg button.on{background:#39414b}
   .tab{color:var(--tx3)}
@@ -309,15 +315,15 @@ canvas.chart{width:100%;height:190px;display:block}
 .bowel-row h3{white-space:nowrap}
 .bowel-choices{display:flex;align-items:center;gap:5px;margin-left:auto}
 .bowel-choices .chip{min-width:54px;padding:7px 10px;margin:0}
-.calendar-open{color:var(--green);font-size:12px;min-height:40px;padding:6px}
+.calendar-open{color:var(--accent-text);font-size:12px;min-height:40px;padding:6px}
 .toilet-section{border-top:1px solid var(--line);margin-top:12px;padding-top:14px}
 .toilet-actions{display:grid;gap:8px;margin-top:10px}
 .toilet-add{display:flex;align-items:center;justify-content:space-between;min-height:54px;
-  padding:10px 14px;background:var(--green-l);color:var(--green-d);border-radius:10px;font-weight:700}
+  padding:10px 14px;background:var(--green-l);color:var(--accent-text);border-radius:10px;font-weight:700}
 .toilet-count{font-size:18px}
 .toilet-interval{color:var(--tx2);font-size:11px}
 .step-import-help{margin:7px 0 10px;color:var(--tx2);font-size:11px}
-.step-first{margin:0 0 10px;padding:9px;border-radius:8px;background:var(--green-l);color:var(--green-d);font-size:11px}
+.step-first{margin:0 0 10px;padding:9px;border-radius:8px;background:var(--green-l);color:var(--accent-text);font-size:11px}
 .step-guide{margin:8px 0 14px;padding-left:22px;color:var(--tx2);font-size:12px}
 .step-guide li{margin:4px 0}
 .step-guide code{font-size:11px}
@@ -327,10 +333,10 @@ canvas.chart{width:100%;height:190px;display:block}
 .cal-day{min-height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   border-radius:10px;background:var(--card);border:2px solid transparent;font-size:14px}
 .cal-mark{height:17px;font-size:13px;line-height:17px}
-.cal-day.has-bowel{background:var(--green-l);color:var(--green-d);font-weight:700}
+.cal-day.has-bowel{background:var(--green-l);color:var(--accent-text);font-weight:700}
 .cal-day.today{font-weight:800}
 .cal-day.selected{border-color:var(--green)}
 @media(prefers-color-scheme:dark){
   :root{--blue:#76aaff}
-  .toilet-add,.cal-day.has-bowel,.step-first{color:#86d9ad}
+  .toilet-add,.cal-day.has-bowel,.step-first{color:var(--accent-text)}
 }

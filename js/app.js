@@ -246,14 +246,24 @@
       render();
     });
 
+    var liverMigration = null;
     S.migrateToilet().then(function () {
       return S.migrateExerciseGoal();
-    }).then(reloadSettings).then(function (st) {
+    }).then(function () {
+      // 初回オフライン等で成分表を読めない場合も起動は続け、次回また試す。
+      return S.migrateChickenLiver().catch(function () { return null; });
+    }).then(function (result) {
+      liverMigration = result;
+      return reloadSettings();
+    }).then(function (st) {
       state.tab = st.lastTab || 'meal';
       Array.prototype.forEach.call(document.querySelectorAll('#tabbar .tab'), function (b) {
         b.classList.toggle('is-active', b.dataset.tab === state.tab);
       });
       render();
+      if (liverMigration && liverMigration.changed) {
+        toast('保存済みの鶏レバー ' + liverMigration.changed + '件を再較正しました', 4200);
+      }
       global.Steps.receiveUrl().then(function (count) {
         if (count) { toast(count + '日分の歩数を取り込みました', 3500); render(); }
       }).catch(function (e) { toast('歩数を取り込めませんでした: ' + e.message, 5000); });

@@ -65,8 +65,16 @@
       var key = [source, a.startDate || '', a.endDate || '', value].join('\u0001');
       if (seen.has(key)) { duplicateCount++; return; }
       seen.add(key);
-      if (!maps[source]) { maps[source] = Object.create(null); meta[source] = { records: 0 }; }
+      if (!maps[source]) {
+        maps[source] = Object.create(null);
+        meta[source] = { records: 0, intervals: Object.create(null) };
+      }
       maps[source][date] = (maps[source][date] || 0) + value;
+      var start = Date.parse(a.startDate || ''), end = Date.parse(a.endDate || '');
+      if (isFinite(start) && isFinite(end) && end > start) {
+        if (!meta[source].intervals[date]) meta[source].intervals[date] = [];
+        meta[source].intervals[date].push([start, end]);
+      }
       meta[source].records++;
       recordCount++;
     }
@@ -75,14 +83,26 @@
         var rows = Object.keys(maps[name]).sort().map(function (date) {
           return { date: date, steps: Math.max(0, Math.round(maps[name][date])) };
         });
+        var overlaps = 0;
+        Object.keys(meta[name].intervals).forEach(function (date) {
+          var intervals = meta[name].intervals[date].sort(function (a, b) { return a[0] - b[0]; });
+          var maxEnd = -Infinity;
+          intervals.forEach(function (interval) {
+            if (interval[0] < maxEnd) overlaps++;
+            if (interval[1] > maxEnd) maxEnd = interval[1];
+          });
+        });
         return {
           name: name, records: meta[name].records, days: rows.length, rows: rows,
           from: rows.length ? rows[0].date : '', to: rows.length ? rows[rows.length - 1].date : '',
-          total: rows.reduce(function (sum, row) { return sum + row.steps; }, 0)
+          total: rows.reduce(function (sum, row) { return sum + row.steps; }, 0), overlaps: overlaps
         };
       }).sort(function (a, b) { return b.days - a.days || b.records - a.records; });
       if (!sources.length) throw new Error('歩数データが見つかりませんでした');
-      return { sources: sources, records: recordCount, duplicates: duplicateCount };
+      return {
+        sources: sources, records: recordCount, duplicates: duplicateCount,
+        overlaps: sources.reduce(function (sum, source) { return sum + source.overlaps; }, 0)
+      };
     }
     return { add: add, finish: finish };
   }
@@ -230,7 +250,19 @@
       if (!source) return;
       previewBox.innerHTML = '<b>' + A.esc(source.days + '日分') + '</b><span>' +
         A.esc(source.from + ' ～ ' + source.to) + '</span><span>' +
-        A.esc(source.records.toLocaleString() + '件の記録') + '</span>';
+        A.esc(source.records.toLocaleString() + '件の記録') + '</span>' +
+        '<span><strong>同じ日の保存済み歩数には上乗せしません</strong></span>';
+      var messages = [];
+      if (parsed.sources.length > 1) {
+        messages.push('iPhoneとApple Watchを同時に合算すると重複するため、記録元を1つだけ選びます。');
+      }
+      if (parsed.duplicates) messages.push(parsed.duplicates + '件の完全重複を除外しました。');
+      if (source.overlaps) {
+        messages.push('この記録元に時間帯が重なる記録が' + source.overlaps.toLocaleString() +
+          '件あります。取り込み前に日別合計を確認してください。');
+      }
+      messages.push('保存時は既存の同日歩数を、選んだ日別合計で置き換えます。');
+      note.textContent = messages.join(' ');
     }
 
     fileInput.addEventListener('change', function () {
@@ -251,9 +283,6 @@
         }).join('');
         status.textContent = '読み取り完了';
         wrap.hidden = false; save.disabled = false;
-        note.textContent = result.sources.length > 1
-          ? '記録元が複数あります。iPhoneとApple Watchを同時に合算すると重複するため、1つ選んで取り込みます。'
-          : (result.duplicates ? result.duplicates + '件の完全重複を除外しました。' : '記録元は1つです。');
         drawSource();
       }).catch(function (e) {
         status.textContent = '読み取れませんでした: ' + e.message;

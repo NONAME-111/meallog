@@ -300,7 +300,8 @@
 
   function scoreCard(sc, hasEntries, missing, note) {
     var t = sc.total, dataShort = hasEntries && t == null, shown = dataShort ? 0 : (t || 0);
-    var color = dataShort ? 'var(--tx3)' : t >= 80 ? 'var(--green)' : (t >= 60 ? 'var(--orange)' : 'var(--red)');
+    var color = dataShort ? 'var(--tx3)' : t >= 80 ? 'var(--accent-text)' :
+      (t >= 60 ? 'var(--warning-text)' : 'var(--danger-text)');
     var label = !hasEntries ? '未記録' : dataShort ? 'データ不足' : t >= 90 ? '素晴らしい' :
       t >= 80 ? 'とても良い' : t >= 70 ? '良い' : t >= 60 ? 'もう少し' : t >= 40 ? '改善の余地あり' : '要改善';
     return '<div class="card score-card"><div class="score-ring">' + ring(shown, color) +
