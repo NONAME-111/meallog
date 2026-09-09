@@ -134,22 +134,36 @@
   /* ---------------- 食事エントリ ---------------- */
   var Entries = {
     /* その食事を「食べなかった」にする / 取り消す */
+    /* on=true でその食事を「食べなかった」にする。戻り値は動かした記録の件数。
+       記録は捨てずに印の中へ預かり、on=false で元のidのまま書き戻す。
+       押し間違いで一日分が消えないようにするための作り。 */
     setSkipped: function (date, slot, on) {
       return Entries.byDate(date).then(function (rows) {
         var marks = rows.filter(function (e) { return isSkip(e) && e.slot === slot; });
         if (!on) {
-          return Promise.all(marks.map(function (m) { return Entries.remove(m.id); }));
+          var restore = [];
+          marks.forEach(function (m) {
+            var kept = (m.ref && m.ref.removed) || [];
+            kept.forEach(function (r) { if (r && r.date && r.slot) restore.push(r); });
+          });
+          return Promise.all(marks.map(function (m) { return Entries.remove(m.id, 'skip'); }))
+            .then(function () {
+              return restore.length ? Entries.putMany(restore) : null;
+            })
+            .then(function () { return restore.length; });
         }
-        if (marks.length) return null;
-        // 食べなかったのだから、その食事の記録は残さない
+        if (marks.length) return 0;
         var others = rows.filter(function (e) { return e.slot === slot && !isSkip(e); });
-        return Promise.all(others.map(function (o) { return Entries.remove(o.id); }))
+        return Promise.all(others.map(function (o) { return Entries.remove(o.id, 'skip'); }))
           .then(function () {
             return Entries.put({
               date: date, slot: slot, name: '食べなかった',
-              amount: 0, unit: '', nutrients: {}, ref: { type: 'skipped' }
+              amount: 0, unit: '', nutrients: {},
+              // 取り消したときに戻せるよう、消した記録をそのまま預かる
+              ref: { type: 'skipped', removed: others }
             });
-          });
+          })
+          .then(function () { return others.length; });
       });
     },
 
@@ -191,10 +205,38 @@
         return records;
       });
     },
-    remove: function (id) {
+    /* why には消した理由を入れる。原因不明の消失を追えるようにするため。
+       'skip'（「食べなかった」）は印の中に控えを持つので、ここでは預からない。 */
+    remove: function (id, why) {
       invalidate();
-      return run('entries', 'readwrite', function (s) { return reqp(s.delete(id)); });
+      var keep = why !== 'skip'
+        ? run('entries', 'readonly', function (s) { return reqp(s.get(id)); })
+        : Promise.resolve(null);
+      return keep.then(function (rec) {
+        if (!rec) return null;
+        return Settings.get().then(function (st) {
+          var list = (st.trash || []).slice();
+          list.unshift({ rec: rec, at: Date.now(), why: why || '削除' });
+          return Settings.save({ trash: list.slice(0, 40) });
+        }).catch(function () { return null; });
+      }).then(function () {
+        return run('entries', 'readwrite', function (s) { return reqp(s.delete(id)); });
+      });
     },
+    /* 控えから書き戻す。idもそのままなので、消す前と同じ記録に戻る */
+    restoreTrash: function (at) {
+      return Settings.get().then(function (st) {
+        var list = st.trash || [];
+        var hit = list.filter(function (x) { return x && x.at === at; })[0];
+        if (!hit || !hit.rec) return null;
+        return Entries.put(hit.rec).then(function () {
+          return Settings.save({
+            trash: list.filter(function (x) { return x && x.at !== at; })
+          });
+        }).then(function () { return hit.rec; });
+      });
+    },
+    clearTrash: function () { return Settings.save({ trash: [] }); },
     recent: function (limit, opts) {
       opts = opts || {};
       return allEntries().then(function (rows0) {
@@ -588,6 +630,7 @@
     toiletMigrated: 0,
     exerciseGoal322Migrated: 0, // 旧既定値200kcalを322kcalへ移した版
     chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
+    trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     lastAddSrc: 'used',       // 追加シートで最後に見ていた区分
     lastHistSlot: '',         // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)

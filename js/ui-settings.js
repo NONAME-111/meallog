@@ -16,10 +16,33 @@
           goalCard(st, w, tg) +
           myFoodCard(my) +
           toiletCard(st) +
+          trashCard(st) +
           dataCard() +
           aboutCard();
         bind(view, st);
       });
+  }
+
+  /* 記録が消えたときの受け皿。何がいつ何によって消えたかを見せ、1件ずつ戻せる */
+  function trashCard(st) {
+    var list = (st.trash || []).filter(function (x) { return x && x.rec; });
+    if (!list.length) return '';
+    var slots = { breakfast: '朝食', lunch: '昼食', dinner: '夕食', snack: '間食' };
+    return '<div class="card"><h3>最近消えた記録</h3>' +
+      '<div class="small muted" style="margin-bottom:8px">消した記録を ' + list.length +
+      ' 件、控えとして預かっています。心当たりのないものがあれば、ここから戻せます。</div>' +
+      list.slice(0, 40).map(function (x) {
+        var r = x.rec, n = (r.nutrients && r.nutrients.kcal) || 0;
+        var when = new Date(x.at);
+        return '<div class="log-line"><span class="grow ellip">' +
+          '<b>' + A().esc(r.name || '(名前なし)') + '</b>' +
+          '<span class="tiny muted"> ' + A().esc(r.date || '') + ' ' +
+          A().esc(slots[r.slot] || r.slot || '') + ' ・ ' + Math.round(n) + ' kcal<br>' +
+          ('0' + when.getHours()).slice(-2) + ':' + ('0' + when.getMinutes()).slice(-2) +
+          ' に ' + A().esc(x.why || '削除') + '</span></span>' +
+          '<button class="btn sub sm" data-untrash="' + x.at + '">戻す</button></div>';
+      }).join('') +
+      '<button class="btn sub wide" id="btnTrashClear" style="margin-top:10px">控えを消す</button></div>';
   }
 
   function profileCard(st) {
@@ -202,6 +225,19 @@
       e.target.value = '';
       if (f) doCsvImport(f);
     });
+    view.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-untrash]');
+      if (!b) return;
+      S.Entries.restoreTrash(Number(b.dataset.untrash)).then(function (rec) {
+        A().toast(rec ? (rec.name + ' を戻しました') : '戻せませんでした');
+        A().render();
+      });
+    });
+    on(view, '#btnTrashClear', 'click', function () {
+      if (!confirm('消した記録の控えを捨てますか？（戻せなくなります）')) return;
+      S.Entries.clearTrash().then(function () { A().toast('控えを消しました'); A().render(); });
+    });
+
     on(view, '#btnWipe', 'click', function () {
       if (!confirm('すべての食事・体重・運動・マイ食品の記録を削除します。よろしいですか？')) return;
       if (!confirm('本当に削除しますか？この操作は取り消せません。')) return;

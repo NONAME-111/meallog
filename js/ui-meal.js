@@ -142,7 +142,7 @@
       '<button type="button" class="meal-time' + (mealTime ? ' is-set' : '') + '" data-mealtime="' + sl.key +
       '" aria-label="' + sl.name + 'の食事時間を' + (mealTime ? '変更' : '設定') + '">🕒 ' +
       A().esc(mealTime || '時間設定') + '</button></span>' +
-      '<span class="slot-kcal">' + (skipped ? '食べなかった' : Math.round(kcal) + ' kcal') +
+      '<span class="slot-kcal">' + (skipped ? '<small>食べなかった</small>' : Math.round(kcal) + '<small> kcal</small>') +
       '</span></div>';
     if (skipped) {
       h += '<div class="empty">この食事は食べませんでした</div>' +
@@ -195,7 +195,7 @@
   function exerciseHtml(list, burned) {
     var burnedDisplay = Math.max(0, Math.round(Number(burned) || 0));
     var h = '<div class="card"><div class="slot-head"><span class="slot-name">🏃 運動</span>' +
-      '<span class="slot-kcal">' + (burnedDisplay ? '-' + burnedDisplay : '0') + ' kcal</span></div>';
+      '<span class="slot-kcal">' + (burnedDisplay ? '-' + burnedDisplay : '0') + '<small> kcal</small></span></div>';
     if (!list.length) h += '<div class="empty">記録がありません</div>';
     else list.forEach(function (x) {
       h += '<div class="item" data-ex="' + A().esc(x.id) + '"><div class="grow">' +
@@ -219,16 +219,27 @@
       if (t.hasAttribute('data-open-score')) return A().setTab('advice');
       if (t.dataset.mealtime) return openMealTime(state, t.dataset.mealtime);
       if (t.dataset.skip) {
-        return Promise.all([
-          S.Entries.setSkipped(state.date, t.dataset.skip, true),
-          S.Body.setMealTime(state.date, t.dataset.skip, '')
-        ]).then(function () {
-          A().toast(slotName(t.dataset.skip) + 'を「食べなかった」にしました');
-          A().render();
+        var skipSlot = t.dataset.skip;
+        return S.Entries.byDate(state.date).then(function (rows) {
+          var kept = rows.filter(function (e) { return e.slot === skipSlot && S.notSkip(e); });
+          // 記録があるのに黙って消さない。押し間違いで一食分が飛ぶため
+          if (kept.length && !confirm(
+            slotName(skipSlot) + 'には ' + kept.length + ' 件の記録があります。\n' +
+            '「食べなかった」にすると一覧から外れます。\n\n' +
+            '「記録できるように戻す」を押せば元どおりに戻せます。')) return null;
+          return Promise.all([
+            S.Entries.setSkipped(state.date, skipSlot, true),
+            S.Body.setMealTime(state.date, skipSlot, '')
+          ]).then(function () {
+            A().toast(slotName(skipSlot) + 'を「食べなかった」にしました' +
+              (kept.length ? '（' + kept.length + '件は戻せます）' : ''));
+            A().render();
+          });
         });
       }
       if (t.dataset.unskip) {
-        return S.Entries.setSkipped(state.date, t.dataset.unskip, false).then(function () {
+        return S.Entries.setSkipped(state.date, t.dataset.unskip, false).then(function (n) {
+          if (n) A().toast(n + '件の記録を戻しました');
           A().render();
         });
       }
@@ -1044,6 +1055,11 @@
         '<hr class="sep">' +
         '<div id="preview"></div>' +
       '</div>' +
+      (pick.justRegistered
+        ? '<div class="next-step">✅ 栄養素を登録しました。<b>この食品はまだ記録されていません。</b>' +
+          '数量を確かめて、下の「' + (existingId ? '更新する' : 'この内容で記録する') +
+          '」を押すと' + slotName(slot) + 'に入ります。</div>'
+        : '') +
       (lacksPfc
         ? '<div class="card"><b>栄養素が登録されていません</b>' +
           '<div class="small muted" style="margin-top:6px">この食品はカロリーだけの登録なので、' +
@@ -1100,7 +1116,9 @@
         servingLabel: isG ? '' : pick.unit, nutrients: pick.per,
         est: pick.est || null,
         myFoodId: pick.ref && pick.ref.type === 'my' ? pick.ref.id : null,
-        linked: !!pick.linked, recordAmount: pick.defaultAmount
+        linked: !!pick.linked, recordAmount: pick.defaultAmount,
+        // 数量画面から来た印。保存後は数量画面を開き直すので、積んだ戻り先は捨てる
+        fromAmount: true
       };
       openManual(state, slot, preset, existingId, onPick);
     });
@@ -1149,7 +1167,7 @@
     if (delBtn) {
       delBtn.addEventListener('click', function () {
         if (!confirm('この記録を削除しますか？')) return;
-        S.Entries.remove(existingId).then(function () {
+        S.Entries.remove(existingId, '「削除する」を押した').then(function () {
           A().closeSheet(); A().toast('削除しました'); A().render();
         });
       });
@@ -1394,9 +1412,12 @@
           return S.MyFoods.put(rec);
         });
       }).then(function (saved) {
-        A().toast('この食品の栄養素を登録しました');
+        A().toast('栄養素を登録しました。あとは数量を決めて記録してください', 4000);
         var savedPick = fromMyFood(saved);
         if (preset.recordAmount > 0) savedPick.defaultAmount = preset.recordAmount;
+        // まだ記録は済んでいないので、次に何をすればよいか数量画面に出す
+        savedPick.justRegistered = true;
+        if (preset.fromAmount) A().dropSheet();
         openAmount(state, slot, savedPick, existingId, onPick);
       }).catch(function (err) {
         A().toast('保存できませんでした: ' + ((err && err.message) || err));

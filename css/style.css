@@ -110,8 +110,13 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .summary-source-panel{margin-top:10px;padding:8px 10px 5px;background:#fff;color:#20242a;
   border:2px solid rgba(15,50,36,.28);border-radius:10px}
 .summary-source-panel .bar{height:11px;margin:0 0 6px;background:#dde2e7;border:1px solid #c7ced5}
-.summary-source-legend{margin:5px 0 2px;color:#3f4852}
-.summary-source-legend span{font-size:12px}
+.summary-source-legend{margin:5px 0 2px}
+/* 内訳パネルはダークでも白地なので、文字と枠は必ず濃い側に固定する。
+   `.source-legend` があとに来て var(--tx2) で上書きするため、詳細度を上げてある */
+.summary-source-panel .source-legend{color:#1b2026;font-weight:700}
+.summary-source-panel .source-legend span{font-size:12px}
+.summary-source-panel .source-legend i{width:13px;height:13px;
+  border:1.5px solid rgba(12,18,24,.62);box-shadow:0 0 0 1px rgba(255,255,255,.75)}
 .pfc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
 .pfc div{background:#fff;color:#20242a;border:2px solid rgba(15,50,36,.28);
   border-radius:8px;padding:8px 6px 7px;text-align:center}
@@ -141,7 +146,8 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
   background:var(--card);font-size:11px;font-weight:700;white-space:nowrap}
 .meal-time.is-set{border-color:var(--green);color:var(--accent-text)}
 .meal-time-sheet input[type=time]{font-size:22px;font-weight:700;text-align:center;min-height:54px}
-.slot-kcal{font-size:12px;color:var(--tx2)}
+.slot-kcal{font-size:17px;font-weight:800;color:var(--tx)}
+.slot-kcal small{font-size:11px;font-weight:600;color:var(--tx2);margin-left:2px}
 .item{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
 .item:first-of-type{border-top:0}
 .item-name{font-size:14px}
@@ -237,6 +243,9 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 /* ---- v11 栄養素入力 ---- */
 .estimate-hint{margin:8px 2px;color:var(--tx2);font-size:12px}
+.next-step{margin:0 0 10px;padding:11px 12px;border-radius:10px;
+  background:var(--green-l);color:var(--tx);border:1.5px solid var(--green);
+  font-size:13px;line-height:1.55}
 .nutrient-edit{margin:4px 0 10px;color:var(--tx2)}
 .tag.registered{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:999px;
   color:var(--accent-text);background:#e9f6ef;font-size:9px;font-weight:700;vertical-align:1px}
