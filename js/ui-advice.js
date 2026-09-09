@@ -359,7 +359,7 @@
     var byKey = {};
     sc.detail.forEach(function (d) { byKey[d.key] = d; });
     var h = '<div class="card score-groups"><div class="row between"><h3>採点と摂取量</h3>' +
-      '<span class="tiny muted score-guide">縦線＝目安・主な項目を常に表示</span></div>' + sourceLegend();
+      '<span class="tiny muted score-guide">帯の中に入っていれば適正</span></div>' + sourceLegend();
     GROUPS.forEach(function (group) {
       var sum = 0, included = 0;
       group.scored.forEach(function (key) {
@@ -397,9 +397,10 @@
   }
 
   function sourceLegend() {
-    return '<div class="source-legend" aria-label="栄養素の供給元">' +
+    return '<div class="source-legend" aria-label="バーの読み方">' +
       '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
-      '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>';
+      '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span>' +
+      '<span><i class="lg-zone"></i>適正ゾーン</span><span><i class="lg-line"></i>基準値</span></div>';
   }
 
   function sourceBar(key, sources, width) {
@@ -419,13 +420,27 @@
     if (!ceiling) ceiling = 1;
     var fill = Math.max(0, Math.min(100, Number(value || 0) / ceiling * 100));
     var markers = [];
+    // 適正ゾーン: 目標値の文字を出さずに「どこに入っていればよいか」を帯で示す
+    var zone = { from: 0, to: 100 };
     if (target.kind === 'band') {
       markers.push({ pct: goal / ceiling * 100, cls: 'lower' });
       markers.push({ pct: upper / ceiling * 100, cls: 'upper' });
+      zone = { from: goal / ceiling * 100, to: upper / ceiling * 100 };
     } else {
       markers.push({ pct: upper / ceiling * 100, cls: 'goal' });
+      if (target.kind === 'max') zone = { from: 0, to: upper / ceiling * 100 };
+      else zone = { from: goal / ceiling * 100, to: 100 };   // min と目安は「ここから上」
     }
-    return { fill: fill, markers: markers };
+    zone.from = Math.max(0, Math.min(100, zone.from));
+    zone.to = Math.max(zone.from, Math.min(100, zone.to));
+    return { fill: fill, markers: markers, zone: zone };
+  }
+
+  function targetZone(spec) {
+    var z = spec.zone;
+    if (!z || z.to - z.from <= 0) return '';
+    return '<u class="nut-zone" style="left:' + z.from + '%;width:' + (z.to - z.from) +
+      '%" aria-hidden="true"></u>';
   }
 
   function targetMarkers(spec) {
@@ -449,66 +464,79 @@
     var limit = target ? (target.max || target.goal) : null;
     var ratio = known && target && target.goal ? value / target.goal : 0;
     var limitRatio = known && limit ? value / limit : 0;
+    // 判定は「適正／不足／過剰」の3語に統一する。程度は記号(◎▼▲✕)で示す
     var cls = 'ok', judge = '適正';
     if (!known || (detail && detail.excluded)) { cls = 'muted'; judge = ''; }
     else if (target && target.kind === 'min') {
       cls = ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad');
-      judge = cls === 'ok' ? '足りている' : (cls === 'low' ? '不足' : '大きく不足');
+      judge = cls === 'ok' ? '適正' : '不足';
     }
     else if (target && target.kind === 'max') {
       cls = limitRatio <= 1 ? 'ok' : (limitRatio <= 1.3 ? 'high' : 'bad');
-      judge = cls === 'ok' ? '範囲内' : (cls === 'high' ? '超過' : '大きく超過');
+      judge = cls === 'ok' ? '適正' : '過剰';
     }
     else if (target && target.kind === 'band') {
       if (value >= target.goal && value <= target.max) { cls = 'ok'; judge = '適正'; }
       else if (value < target.goal) {
         cls = ratio >= 0.9 ? 'ok' : (ratio >= 0.7 ? 'low' : 'bad');
-        judge = cls === 'ok' ? '適正' : (cls === 'low' ? '不足' : '大きく不足');
+        judge = cls === 'ok' ? '適正' : '不足';
       } else {
         cls = limitRatio <= 1.3 ? 'high' : 'bad';
-        judge = cls === 'high' ? '超過' : '大きく超過';
+        judge = '過剰';
       }
     }
     else if (target) {
       var gap = Math.abs(ratio - 1);
       cls = gap <= 0.1 ? 'ok' : (gap <= 0.25 ? 'high' : 'bad');
-      judge = cls === 'ok' ? '目安どおり'
-        : ratio > 1 ? (cls === 'high' ? 'やや多い' : '多すぎ')
-          : (cls === 'high' ? 'やや少ない' : '少なすぎ');
+      judge = cls === 'ok' ? '適正' : (ratio > 1 ? '過剰' : '不足');
     }
     else judge = '';
+
+    // ✕ は「大きく外れている」の意味。読み上げにも残す
+    var judgeFull = cls === 'bad' ? ('大きく' + judge) : judge;
     var clickable = detail && !detail.excluded && (detail.kind === 'min' || detail.kind === 'band') &&
       detail.ratio < 1 && key !== 'exercise';
     var tag = clickable ? 'button' : 'div';
+    // 1項目1行。名前｜判定｜バー｜摂取量 で、目標値は帯と縦線で表す
     var h = '<' + tag + ' class="nut-detail' + (clickable ? ' tappable' : '') +
       '" data-nutrient="' + key + '"' +
-      (clickable ? ' data-rich="' + key + '"' : '') + '><div class="nut-detail-top"><span class="nut-name">' +
-      A().esc(meta[0]) + '</span><span class="nut-val"><b>' + (est > 0 ? '約' : '') +
-      (known ? N.fmt(value) : '—') + '</b> ' + A().esc(meta[1]);
-    if (target) h += ' <span class="muted">/ ' + targetText(target) + '</span>';
-    h += '</span></div>';
+      (clickable ? ' data-rich="' + key + '"' : '') +
+      ' title="' + A().esc(meta[0] + ' ' + (known ? N.fmt(value) : '—') + meta[1] +
+        (judgeFull ? '（' + judgeFull + '）' : '') +
+        (target ? '目標 ' + targetText(target) + ' ' + meta[1] : '')) + '">' +
+      '<span class="nut-name">' + A().esc(meta[0]) + '</span>' +
+      (judge
+        ? '<span class="judge-tag ' + cls + '" aria-label="' + A().esc(judgeFull) +
+          '"><i class="judge-mark" aria-hidden="true">' + JUDGE_MARK[cls] + '</i>' + judge + '</span>'
+        : '<span class="judge-tag muted">—</span>');
     if (target) {
       var spec = barSpec(target, known ? value : 0);
-      h += key === 'exercise'
-        ? '<div class="nut-bar"><i class="' + cls + '" style="width:' + spec.fill + '%"></i>' +
-          targetMarkers(spec) + '</div>'
-        : '<div class="nut-bar source-stack">' + sourceBar(key, sources, spec.fill) +
-          targetMarkers(spec) + '</div>';
+      h += '<span class="nut-bar' + (key === 'exercise' ? '' : ' source-stack') + '">' +
+        targetZone(spec) +
+        (key === 'exercise'
+          ? '<i class="' + cls + '" style="width:' + spec.fill + '%"></i>'
+          : sourceBar(key, sources, spec.fill)) +
+        targetMarkers(spec) + '</span>';
+    } else {
+      h += '<span class="nut-bar"></span>';
     }
-    h += '<div class="nut-flags">' +
-      (judge ? '<span class="judge-tag ' + cls + '"><i class="judge-mark" aria-hidden="true">' +
-        JUDGE_MARK[cls] + '</i>' + judge + '</span>' : '') +
-      (detail && detail.excluded ? '<span>採点対象外</span>' : '') +
-      (key !== 'exercise' && cov < 0.999 ? '<span>カバー ' + Math.round(cov * 100) + '%</span>' : '') +
-      (est > 0 ? '<span>推定 ' + Math.round(est * 100) + '%</span>' : '') +
-      (clickable ? '<span class="rich-hint">多い食品を見る ›</span>' : '') + '</div>';
+    h += '<span class="nut-val"><b>' + (est > 0 ? '約' : '') +
+      (known ? N.fmt(value) : '—') + '</b><i>' + A().esc(meta[1]) + '</i>' +
+      (clickable ? '<em>›</em>' : '') + '</span>';
+    // 例外があるときだけ2行目を足す。ふだんは1行で済む
+    var notes = '';
+    if (detail && detail.excluded) notes += '<span>採点対象外</span>';
+    if (key !== 'exercise' && cov < 0.999) notes += '<span>カバー ' + Math.round(cov * 100) + '%</span>';
+    if (est > 0) notes += '<span>推定 ' + Math.round(est * 100) + '%</span>';
     if (key === 'exercise' && activity && activity.hasData) {
-      h += '<div class="tiny muted activity-breakdown">運動記録 ' + N.fmt(activity.exerciseKcal) +
-        ' kcal ＋ ' + (activity.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数由来 ') +
+      notes += '<span>運動記録 ' + N.fmt(activity.exerciseKcal) + ' kcal ＋ ' +
+        (activity.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数由来 ') +
         N.fmt(activity.stepKcal) + ' kcal' +
         (activity.steps != null ? '（' + Math.round(activity.steps).toLocaleString() + '歩）' :
-          activity.days != null ? '（データあり ' + activity.days + '/' + activity.totalDays + '日）' : '') + '</div>';
+          activity.days != null ? '（データあり ' + activity.days + '/' + activity.totalDays + '日）' : '') +
+        '</span>';
     }
+    if (notes) h += '<span class="nut-flags">' + notes + '</span>';
     return h + '</' + tag + '>';
   }
 

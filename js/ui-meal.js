@@ -89,7 +89,7 @@
         '</div>' +
         '<div class="sum-goal">' +
           (burned ? '運動 -' + burned + ' kcal ／ ' : '') +
-          (over ? 'あと ' + Math.abs(rest) + ' kcal オーバー' : 'あと ' + rest + ' kcal') +
+          (over ? '目標を ' + Math.abs(rest) + ' kcal オーバー' : 'あと ' + rest + ' kcal') +
         '</div>' +
         '<div class="pfc">' +
           pfcCell('P たんぱく質', t.protein, tg.protein.goal, 'g') +
