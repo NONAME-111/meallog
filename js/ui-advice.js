@@ -400,7 +400,10 @@
     return '<div class="source-legend" aria-label="バーの読み方">' +
       '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
       '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span>' +
-      '<span><i class="lg-zone"></i>適正ゾーン</span><span><i class="lg-line"></i>基準値</span></div>';
+      '<span><i class="lg-zone"></i>適正ゾーン</span><span><i class="lg-line"></i>基準値</span></div>' +
+      '<div class="aim-legend"><span><b>↓</b>これ以下に抑える</span>' +
+      '<span><b>↕</b>この範囲に</span><span><b>↑</b>これ以上とる</span>' +
+      '<span><b>≒</b>目安に近づける</span></div>';
   }
 
   function sourceBar(key, sources, width) {
@@ -429,11 +432,26 @@
     } else {
       markers.push({ pct: upper / ceiling * 100, cls: 'goal' });
       if (target.kind === 'max') zone = { from: 0, to: upper / ceiling * 100 };
-      else zone = { from: goal / ceiling * 100, to: 100 };   // min と目安は「ここから上」
+      else if (target.kind === 'min') zone = { from: goal / ceiling * 100, to: 100 };
+      // 目安型は目標の前後10%が適正(判定のしきい値と合わせる)
+      else zone = { from: goal * 0.9 / ceiling * 100, to: goal * 1.1 / ceiling * 100 };
     }
     zone.from = Math.max(0, Math.min(100, zone.from));
     zone.to = Math.max(zone.from, Math.min(100, zone.to));
     return { fill: fill, markers: markers, zone: zone };
+  }
+
+  /* 栄養素は3種類ある。どれなのかを名前の頭の記号で示す。
+     ↓ これ以下に抑える(塩分など) / ↕ この範囲に(カロリー・PFC) / ↑ これ以上とる(ビタミン等) */
+  function aimMark(target) {
+    if (!target) return '';
+    var mark = target.kind === 'max' ? '↓'
+      : target.kind === 'band' ? '↕'
+        : target.kind === 'min' ? '↑' : '≒';
+    var label = target.kind === 'max' ? 'これ以下に抑える'
+      : target.kind === 'band' ? 'この範囲に収める'
+        : target.kind === 'min' ? 'これ以上とる' : '目安に近づける';
+    return '<i class="aim" title="' + label + '" aria-label="' + label + '">' + mark + '</i>';
   }
 
   function targetZone(spec) {
@@ -504,7 +522,7 @@
       ' title="' + A().esc(meta[0] + ' ' + (known ? N.fmt(value) : '—') + meta[1] +
         (judgeFull ? '（' + judgeFull + '）' : '') +
         (target ? '目標 ' + targetText(target) + ' ' + meta[1] : '')) + '">' +
-      '<span class="nut-name">' + A().esc(meta[0]) + '</span>' +
+      '<span class="nut-name">' + aimMark(target) + A().esc(meta[0]) + '</span>' +
       (judge
         ? '<span class="judge-tag ' + cls + '" aria-label="' + A().esc(judgeFull) +
           '"><i class="judge-mark" aria-hidden="true">' + JUDGE_MARK[cls] + '</i>' + judge + '</span>'

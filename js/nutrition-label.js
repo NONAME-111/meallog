@@ -1,4 +1,4 @@
-/* nutrition-label.js - iOSの「テキストをスキャン」で得た栄養成分表示を解析する */
+/* nutrition-label.js - カメラ読み取りや貼り付けで得た栄養成分表示を解析する */
 (function (global) {
   'use strict';
 
@@ -34,15 +34,47 @@
     { key: 'vitc', names: ['ビタミン\\s*C'], unit: 'mg' }
   ];
 
+  // かな・漢字・カタカナ。文字認識はこの間に空白を入れてくるので、詰め直す
+  var CJK = '\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uff66-\\uff9f';
+  var CJK_SPACE = new RegExp('([' + CJK + '])[ \\t]+(?=[' + CJK + '])', 'g');
+
   function normalize(text) {
     text = String(text || '');
     if (text.normalize) text = text.normalize('NFKC');
-    return text
+    text = text
       .replace(/[µμ]/g, 'u')
       .replace(/[：]/g, ':')
       .replace(/[，,]/g, '')
       .replace(/[−–—]/g, '-')
       .replace(/キロカロリー/gi, 'kcal');
+    // 「た ん ぱく 質」→「たんぱく質」。2回かけると3文字以上の分断も詰まる
+    text = text.replace(CJK_SPACE, '$1').replace(CJK_SPACE, '$1');
+    return text;
+  }
+
+  /* 食品表示法で、この5つはこの順に書くと決まっている。
+     見出しが読めなくても、数字と単位の並びから当てられる。
+     推測なので orderGuess を立てて、画面側で確認をうながす。 */
+  var ORDER = [
+    { key: 'kcal', unit: 'kcal' }, { key: 'protein', unit: 'g' }, { key: 'fat', unit: 'g' },
+    { key: 'carb', unit: 'g' }, { key: 'salt', unit: 'g' }
+  ];
+
+  function byOrder(text) {
+    var re = /([0-9]+(?:\.[0-9]+)?)\s*(kcal|g|mg)\b/gi, m, seq = [];
+    while ((m = re.exec(text))) seq.push({ n: parseFloat(m[1]), u: m[2].toLowerCase() });
+    var start = 0;
+    while (start < seq.length && seq[start].u !== 'kcal') start++;
+    if (start >= seq.length) return null;
+    var out = {}, keys = [];
+    for (var i = 0; i < ORDER.length; i++) {
+      var item = seq[start + i];
+      if (!item || item.u !== ORDER[i].unit) return null;
+      if (!isFinite(item.n) || item.n < 0) return null;
+      out[ORDER[i].key] = item.n;
+      keys.push(ORDER[i].key);
+    }
+    return { nutrients: out, foundKeys: keys };
   }
 
   function midpoint(a, b) {
@@ -117,12 +149,25 @@
       foundKeys.push('carb');
     }
     delete nutrients._labelSugar;
+    // 見出しがほとんど読めなかったときだけ、表示の順番から当てにいく
+    var orderGuess = false;
+    if (foundKeys.length < 3) {
+      var guess = byOrder(normalized);
+      if (guess) {
+        orderGuess = true;
+        guess.foundKeys.forEach(function (key) {
+          if (typeof nutrients[key] === 'number') return;
+          nutrients[key] = guess.nutrients[key];
+          foundKeys.push(key);
+        });
+      }
+    }
     var p = portion(normalized);
     return {
-      nutrients: nutrients, foundKeys: foundKeys,
+      nutrients: nutrients, foundKeys: foundKeys, orderGuess: orderGuess,
       basis: p.basis, servingLabel: p.servingLabel, grams: p.grams
     };
   }
 
-  global.NutritionLabel = { parse: parse, normalize: normalize };
+  global.NutritionLabel = { parse: parse, normalize: normalize, _byOrder: byOrder };
 })(window);

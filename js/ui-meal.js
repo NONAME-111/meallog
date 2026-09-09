@@ -129,6 +129,7 @@
   }
 
   function pfcCell(label, v, goal, unit) {
+    // 1段目に「摂取量 / 目標」、2段目にPFCの名前。分子を大きく、分母を小さく
     return '<div><b>' + Math.round(v || 0) + '<span class="of">/' + goal + unit + '</span></b>' +
       '<span>' + label + '</span></div>';
   }
@@ -342,32 +343,35 @@
     if (!SRC_TABS.filter(function (t) { return t.key === src; }).length) src = 'used';
     var histSlot = (opts.histSlot != null) ? opts.histSlot : (st.lastHistSlot || '');
 
+    // 上半分は動かさない。件数で高さが変わるとタップ位置がずれるため
     var html = '' +
-      '<div class="seg" id="addSeg">' +
-        SRC_TABS.map(function (t) {
-          return '<button' + (t.key === src ? ' class="on"' : '') +
-            ' data-src="' + t.key + '">' + t.label + '</button>';
-        }).join('') +
+      '<div class="add-layout"><div class="add-fixed">' +
+        '<div class="seg" id="addSeg">' +
+          SRC_TABS.map(function (t) {
+            return '<button' + (t.key === src ? ' class="on"' : '') +
+              ' data-src="' + t.key + '">' + t.label + '</button>';
+          }).join('') +
+        '</div>' +
+        '<div class="row" style="margin-bottom:8px">' +
+          '<input type="text" id="q" placeholder="食品名で検索（例: とりむね、なす、ごはん）" ' +
+          'autocomplete="off" value="' + A().esc(opts.query || '') + '">' +
+        '</div>' +
+        '<div id="slotFilter" class="chips-row"' + (src === 'hist' ? '' : ' hidden') + '>' +
+          [{ key: '', label: '全部' }].concat(SLOTS.map(function (s2) {
+            return { key: s2.key, label: s2.icon + ' ' + s2.name };
+          })).map(function (f) {
+            return '<button class="chip' + (f.key === histSlot ? ' on' : '') +
+              '" data-hslot="' + f.key + '">' + f.label + '</button>';
+          }).join('') +
+        '</div>' +
+        '<div class="row" style="gap:8px;margin:8px 0">' +
+          '<button class="btn line sm grow" id="btnScan">📷 バーコード</button>' +
+          '<button class="btn line sm grow" id="btnManual">✏️ 手入力で登録</button>' +
+        '</div>' +
       '</div>' +
-      '<div class="row" style="margin-bottom:10px">' +
-        '<input type="text" id="q" placeholder="食品名で検索（例: とりむね、なす、ごはん）" ' +
-        'autocomplete="off" value="' + A().esc(opts.query || '') + '">' +
-      '</div>' +
-      '<div id="slotFilter" class="chips-row"' + (src === 'hist' ? '' : ' hidden') + '>' +
-        [{ key: '', label: '全部' }].concat(SLOTS.map(function (s2) {
-          return { key: s2.key, label: s2.icon + ' ' + s2.name };
-        })).map(function (f) {
-          return '<button class="chip' + (f.key === histSlot ? ' on' : '') +
-            '" data-hslot="' + f.key + '">' + f.label + '</button>';
-        }).join('') +
-      '</div>' +
-      '<div class="row" style="gap:8px;margin:10px 0">' +
-        '<button class="btn line sm grow" id="btnScan">📷 バーコード</button>' +
-        '<button class="btn line sm grow" id="btnManual">✏️ 手入力で登録</button>' +
-      '</div>' +
-      '<div id="results"></div>';
+      '<div id="results" class="add-scroll"></div></div>';
 
-    var body = A().openSheet(slotName(slot) + 'に追加', html);
+    var body = A().openSheet(slotName(slot) + 'に追加', html, { fill: true });
     var q = body.querySelector('#q');
     var results = body.querySelector('#results');
     var slotFilter = body.querySelector('#slotFilter');
@@ -1214,8 +1218,11 @@
     var initialEstKeys = (preset.est && preset.est.keys) ? preset.est.keys.slice() : [];
     var html = '' +
       '<div class="card">' +
-        '<label class="fld"><span>食品名</span><input type="text" id="mName" value="' +
-          A().esc(preset.name || '') + '" placeholder="例: セブン ゆで卵"></label>' +
+        '<label class="fld"><span>食品名<b class="req">必須</b></span>' +
+          '<input type="text" id="mName" value="' + A().esc(preset.name || '') +
+          '" placeholder="例: セブン ゆで卵"></label>' +
+        '<div class="field-error" id="mNameError" role="alert" hidden>' +
+          '⚠️ 食品名がないと登録できません。上の欄に名前を入れてください。</div>' +
         '<label class="fld"><span>メーカー・ブランド(任意)</span><input type="text" id="mBrand" value="' +
           A().esc(preset.brand || '') + '"></label>' +
         '<label class="fld"><span>入力の基準</span><select id="mBasis">' +
@@ -1226,15 +1233,16 @@
           '<input type="text" id="mServ" value="' + A().esc(preset.servingLabel || '個') + '" placeholder="個 / 袋 / 食"></label>' +
       '</div>' +
       '<div class="card" id="ocrCard"><h3>栄養成分表示を読み取る</h3>' +
+        '<button class="btn wide" id="mCamera">📷 カメラで読み取る</button>' +
         '<ol class="scan-steps">' +
-          '<li>下の欄を<b>長押し</b>する</li>' +
-          '<li>出てきたメニューの<b>「テキストをスキャン」</b>を選ぶ</li>' +
-          '<li>カメラでパッケージの栄養成分表示を写す</li>' +
+          '<li>カメラで栄養成分表示を<b>まっすぐ大きく</b>写す</li>' +
+          '<li>写真の上で、表の部分を<b>指でなぞって囲む</b></li>' +
+          '<li>「この範囲を読み取る」を押すと<b>下の各欄に入ります</b></li>' +
         '</ol>' +
-        '<div class="small muted">読み取った数値は<b>そのまま下の各欄に入ります</b>。' +
-        'メニューに出ないときは、カメラアプリのLive Textでコピーして貼り付けてください。</div>' +
-        '<textarea id="mOcr" class="ocr-input" rows="6" placeholder="ここを長押し →「テキストをスキャン」"></textarea>' +
-        '<button class="btn line wide" id="mParse">もう一度、各欄へ反映する</button>' +
+        '<details class="nut-more"><summary>文字を貼り付けて入れる</summary>' +
+          '<textarea id="mOcr" class="ocr-input" rows="6" ' +
+          'placeholder="栄養成分表示の文字を貼り付け"></textarea>' +
+          '<button class="btn line wide" id="mParse">各欄へ反映する</button></details>' +
         '<div class="tiny muted" id="mParseResult" role="status"></div></div>' +
       '<div class="card"><h3>栄養成分</h3>' +
         '<div class="nut-edit-grid">' + nutrientFields(EDIT_MAIN, preset, initialEstKeys) + '</div>' +
@@ -1337,8 +1345,11 @@
       if (parsed.grams) refGrams = parsed.grams;
       toggleServ(); drawRef();
       result.textContent = parsed.foundKeys.length
-        ? parsed.foundKeys.map(function (k) { return F.meta(k)[0]; }).join('・') + 'を反映しました。数値を確認してください。'
-        : '読み取れる栄養素がありませんでした。文字と単位を確認してください。';
+        ? parsed.foundKeys.map(function (k) { return F.meta(k)[0]; }).join('・') + 'を反映しました。' +
+          (parsed.orderGuess
+            ? '見出しが読み取れなかったため、表示の並び順から当てはめています。数値が合っているか必ず確認してください。'
+            : '数値を確認してください。')
+        : '読み取れる栄養素がありませんでした。明るい場所で、表の部分だけを大きく写してみてください。';
     }
 
     var ocrTimer = 0;
@@ -1348,12 +1359,29 @@
     });
     body.querySelector('#mParse').addEventListener('click', function () { applyOcr(false); });
 
+    var camera = body.querySelector('#mCamera');
+    if (camera) camera.addEventListener('click', function () {
+      if (!global.Ocr) { A().toast('読み取り機能を読み込めませんでした'); return; }
+      global.Ocr.capture().then(function (text) {
+        if (!text) return;
+        ocr.value = text;
+        applyOcr(false);
+        var box = body.querySelector('#mParseResult');
+        if (box) box.scrollIntoView({ block: 'center' });
+      });
+    });
+
     // 「栄養成分表示を読み取る」から来たときは、その欄をすぐ触れる位置に出す
     if (preset.focusOcr) {
       setTimeout(function () {
         var card = body.querySelector('#ocrCard');
         if (card) card.scrollIntoView({ block: 'start' });
       }, 80);
+    }
+    // カメラで読み取った文字を持って来ているときは、すぐ各欄へ入れる
+    if (preset.ocrText) {
+      ocr.value = preset.ocrText;
+      applyOcr(false);
     }
 
     var unlink = body.querySelector('#mUnlink');
@@ -1364,9 +1392,25 @@
       });
     });
 
+    var nameInput = body.querySelector('#mName');
+    var nameError = body.querySelector('#mNameError');
+    nameInput.addEventListener('input', function () {
+      if (nameInput.value.trim()) {
+        nameError.hidden = true; nameInput.classList.remove('is-error');
+      }
+    });
+
     body.querySelector('#mSave').addEventListener('click', function () {
-      var name = body.querySelector('#mName').value.trim();
-      if (!name) { A().toast('食品名を入力してください'); return; }
+      var name = nameInput.value.trim();
+      if (!name) {
+        // トーストだけだと見落とすので、欄そのものに出して先頭まで戻す
+        nameError.hidden = false;
+        nameInput.classList.add('is-error');
+        nameInput.scrollIntoView({ block: 'center' });
+        try { nameInput.focus(); } catch (e) { void e; }
+        A().toast('食品名を入力してください');
+        return;
+      }
       var nut = {}, retainedEstKeys = [];
       Array.prototype.forEach.call(body.querySelectorAll('[data-nut]'), function (input) {
         var value = parseFloat(input.value), key = input.dataset.nut;
@@ -1598,7 +1642,16 @@
     var body = A().openSheet('バーコードを登録', html);
 
     body.querySelector('#bScanText').addEventListener('click', function () {
-      openManual(state, slot, { barcode: code, basis: 'serving', focusOcr: true });
+      // 手入力画面を挟まず、そのままカメラを開く。読み取れた文字を持って画面へ渡す
+      if (!global.Ocr) {
+        openManual(state, slot, { barcode: code, basis: 'serving', focusOcr: true });
+        return;
+      }
+      global.Ocr.capture().then(function (text) {
+        openManual(state, slot, {
+          barcode: code, basis: 'serving', focusOcr: true, ocrText: text || ''
+        });
+      });
     });
 
     body.querySelector('#bNew').addEventListener('click', function () {

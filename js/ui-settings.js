@@ -15,7 +15,6 @@
           profileCard(st) +
           goalCard(st, w, tg) +
           myFoodCard(my) +
-          toiletCard(st) +
           trashCard(st) +
           dataCard() +
           aboutCard();
@@ -28,7 +27,7 @@
     var list = (st.trash || []).filter(function (x) { return x && x.rec; });
     if (!list.length) return '';
     var slots = { breakfast: '朝食', lunch: '昼食', dinner: '夕食', snack: '間食' };
-    return '<div class="card"><h3>最近消えた記録</h3>' +
+    return '<div class="card"><h3>最近削除した記録</h3>' +
       '<div class="small muted" style="margin-bottom:8px">消した記録を ' + list.length +
       ' 件、控えとして預かっています。心当たりのないものがあれば、ここから戻せます。</div>' +
       list.slice(0, 40).map(function (x) {
@@ -97,33 +96,45 @@
       '月ごろ）に目標体重に到達する計算です。</div>';
   }
 
-  function myFoodCard(my) {
-    var h = '<div class="card"><div class="row between" style="margin-bottom:8px">' +
-      '<h3 style="margin:0">マイ食品（' + my.length + '件）</h3></div>';
-    if (!my.length) {
-      h += '<div class="empty">手入力やバーコード登録した食品がここに並びます</div>';
-    } else {
-      my.slice(0, 30).forEach(function (m) {
-        var per = m.basis === 'serving' ? ('1' + (m.servingLabel || '食')) : '100g';
-        h += '<div class="row between" style="padding:8px 0;border-top:1px solid var(--line)">' +
-          '<span class="grow ellip"><b class="small">' + A().esc(m.name) + '</b>' +
-          '<span class="tiny muted"> ' + per + 'あたり ' +
-          Math.round((m.nutrients && m.nutrients.kcal) || 0) + ' kcal' +
-          (m.barcode ? ' ・ ' + A().esc(m.barcode) : '') + '</span></span>' +
-          '<button class="tiny" data-delmy="' + A().esc(m.id) + '" ' +
-          'style="color:var(--danger-text);text-decoration:underline;flex:none">' +
-          (m.linked ? '紐付け解除' : '削除') + '</button></div>';
-      });
-      if (my.length > 30) h += '<div class="tiny muted" style="margin-top:6px">ほか ' + (my.length - 30) + ' 件</div>';
+  /* 400件あるので、名前で絞り込めるようにする。入力のたびに一覧だけ描き替え、
+     入力欄そのものは触らない(触るとiPhoneでフォーカスとキーボードが飛ぶ) */
+  var myFoods = [], myFilter = '';
+
+  function myFoodRows() {
+    var q = F.norm(myFilter.trim());
+    var hit = q ? myFoods.filter(function (m) {
+      return F.norm(m.name).indexOf(q) !== -1 ||
+        (m.brand && F.norm(m.brand).indexOf(q) !== -1) ||
+        (m.barcode && String(m.barcode).indexOf(myFilter.trim()) !== -1);
+    }) : myFoods;
+    if (!myFoods.length) {
+      return '<div class="empty">手入力やバーコード登録した食品がここに並びます</div>';
     }
-    return h + '</div>';
+    if (!hit.length) return '<div class="empty">「' + A().esc(myFilter) + '」に一致する食品がありません</div>';
+    var h = q ? '<div class="tiny muted" style="margin-bottom:4px">' + hit.length + ' 件</div>' : '';
+    h += hit.slice(0, 50).map(function (m) {
+      var per = m.basis === 'serving' ? ('1' + (m.servingLabel || '食')) : '100g';
+      return '<div class="row between" style="padding:8px 0;border-top:1px solid var(--line)">' +
+        '<span class="grow ellip"><b class="small">' + A().esc(m.name) + '</b>' +
+        '<span class="tiny muted"> ' + per + 'あたり ' +
+        Math.round((m.nutrients && m.nutrients.kcal) || 0) + ' kcal' +
+        (m.barcode ? ' ・ ' + A().esc(m.barcode) : '') + '</span></span>' +
+        '<button class="tiny" data-delmy="' + A().esc(m.id) + '" ' +
+        'style="color:var(--judge-bad);text-decoration:underline;flex:none">削除</button></div>';
+    }).join('');
+    if (hit.length > 50) h += '<div class="tiny muted" style="margin-top:6px">ほか ' + (hit.length - 50) + ' 件</div>';
+    return h;
   }
 
-  function toiletCard(st) {
-    return '<div class="card"><h3>トイレ記録のボタン</h3>' +
-      '<label class="fld"><span>ボタン名（カンマ区切り）</span>' +
-      '<input type="text" id="sToilet" value="' + A().esc((st.toiletTypes || []).join(',')) + '"></label>' +
-      '<div class="tiny muted">例: 小 ／ お通じはカラダタブで記録します</div></div>';
+  function myFoodCard(my) {
+    myFoods = my || [];
+    return '<div class="card"><div class="row between" style="margin-bottom:8px">' +
+      '<h3 style="margin:0">マイ食品（' + myFoods.length + '件）</h3></div>' +
+      (myFoods.length
+        ? '<input type="text" id="myFoodQ" placeholder="食品名・ブランド・バーコードで絞り込み" ' +
+          'autocomplete="off" value="' + A().esc(myFilter) + '">'
+        : '') +
+      '<div id="myFoodList" style="margin-top:6px">' + myFoodRows() + '</div></div>';
   }
 
   function dataCard() {
@@ -195,11 +206,6 @@
       var v = parseInt(e.target.value, 10);
       save({ exerciseKcalGoal: isFinite(v) && v > 0 ? v : 322 });
     });
-    on(view, '#sToilet', 'change', function (e) {
-      var list = e.target.value.split(',').map(function (x) { return x.trim(); })
-        .filter(function (x) { return x && x !== '大'; });
-      save({ toiletTypes: list.length ? list : ['小'] });
-    });
 
     view.addEventListener('click', function (ev) {
       var d = ev.target.closest('[data-delmy]');
@@ -237,6 +243,19 @@
       if (!confirm('消した記録の控えを捨てますか？（戻せなくなります）')) return;
       S.Entries.clearTrash().then(function () { A().toast('控えを消しました'); A().render(); });
     });
+
+    var myQ = view.querySelector('#myFoodQ');
+    if (myQ) {
+      var myTimer = 0;
+      myQ.addEventListener('input', function () {
+        clearTimeout(myTimer);
+        myTimer = setTimeout(function () {
+          myFilter = myQ.value;
+          var box = view.querySelector('#myFoodList');
+          if (box) box.innerHTML = myFoodRows();
+        }, 150);
+      });
+    }
 
     on(view, '#btnWipe', 'click', function () {
       if (!confirm('すべての食事・体重・運動・マイ食品の記録を削除します。よろしいですか？')) return;

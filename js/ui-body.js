@@ -25,7 +25,8 @@
       view.innerHTML =
         weightCard(rec, st, tg, history) +
         customCard(rec, st) +
-        '<div class="card elimination-card">' + bowelCard(rec) + toiletCard(rec, st, history) + '</div>' +
+        '<div class="card elimination-card"><h3>トイレ</h3>' +
+          bowelCard(rec) + toiletCard(rec, st, history) + '</div>' +
         memoCard(rec);
       bind(view, state, rec, st, history);
     });
@@ -119,7 +120,8 @@
   /* ---- お通じ ---- */
   function bowelCard(rec) {
     var opts = [['yes', 'あり'], ['no', 'なし']];
-    return '<section class="bowel-section"><div class="bowel-row"><h3>お通じ</h3><div class="bowel-choices">' +
+    return '<section class="bowel-section"><div class="bowel-row">' +
+      '<span class="sub-head">お通じ</span><div class="bowel-choices">' +
       opts.map(function (o) {
         return '<button class="chip' + (rec.bowel === o[0] ? ' on' : '') +
           '" data-bowel="' + o[0] + '">' + o[1] + '</button>';
@@ -138,7 +140,7 @@
       if (counts[x.type] == null) counts[x.type] = 0;
       counts[x.type]++;
     });
-    var h = '<section class="toilet-section"><h3>トイレ</h3><div class="toilet-actions">';
+    var h = '<section class="toilet-section"><div class="toilet-actions">';
     types.forEach(function (t) {
       h += '<button class="toilet-add" data-toilet="' + A().esc(t) + '"><span>＋ ' + A().esc(t) + 'を記録</span>' +
         '<span class="toilet-count">' + (counts[t] || 0) + ' 回</span></button>';

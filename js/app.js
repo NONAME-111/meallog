@@ -56,6 +56,10 @@
       cl.dataset.close = back ? 'back' : '1';
       cl.textContent = back ? '‹ 戻る' : '閉じる';
     }
+    // fill: 高さを固定し、中身側でスクロール範囲を決める(食品追加の一覧など)
+    var panel = sheet.querySelector('.sheet-panel');
+    panel.classList.toggle('fill', !!opts.fill);
+    body.classList.toggle('fill', !!opts.fill);
     sheet.hidden = false;
     // シートが開いている間はフロートの追加ボタンを隠す
     document.body.classList.add('sheet-open');
