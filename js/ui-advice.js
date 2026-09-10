@@ -393,14 +393,19 @@
       h += '</div>';
       h += '</section>';
     });
-    return h + '<div class="tiny muted score-source">目標値は「日本人の食事摂取基準(2025年版)」の18〜64歳の推奨量・目安量・目標量が基準です。</div></div>';
+    return h + '<div class="tiny muted score-source">' +
+      '「栄養データ○%」は、その日食べたもののうち、その栄養素の値が分かっている割合です。' +
+      '低いときは実際にはもっと摂れている可能性があります。' +
+      '「うち推定○%」は、食品成分表から補った割合です。<br>' +
+      '目標値は「日本人の食事摂取基準(2025年版)」の18〜64歳の推奨量・目安量・目標量が基準です。</div></div>';
   }
 
   function sourceLegend() {
     return '<div class="source-legend" aria-label="バーの読み方">' +
       '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
       '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span>' +
-      '<span><i class="lg-zone"></i>適正ゾーン</span><span><i class="lg-line"></i>基準値</span></div>' +
+      '<span><i class="lg-zone"></i>うすい緑＝適正の範囲</span>' +
+      '<span><i class="lg-line"></i>基準値</span></div>' +
       '<div class="aim-legend"><span><b>↓</b>これ以下に抑える</span>' +
       '<span><b>↕</b>この範囲に</span><span><b>↑</b>これ以上とる</span>' +
       '<span><b>≒</b>目安に近づける</span></div>';
@@ -522,11 +527,7 @@
       ' title="' + A().esc(meta[0] + ' ' + (known ? N.fmt(value) : '—') + meta[1] +
         (judgeFull ? '（' + judgeFull + '）' : '') +
         (target ? '目標 ' + targetText(target) + ' ' + meta[1] : '')) + '">' +
-      '<span class="nut-name">' + aimMark(target) + A().esc(meta[0]) + '</span>' +
-      (judge
-        ? '<span class="judge-tag ' + cls + '" aria-label="' + A().esc(judgeFull) +
-          '"><i class="judge-mark" aria-hidden="true">' + JUDGE_MARK[cls] + '</i>' + judge + '</span>'
-        : '<span class="judge-tag muted">—</span>');
+      '<span class="nut-name">' + aimMark(target) + A().esc(meta[0]) + '</span>';
     if (target) {
       var spec = barSpec(target, known ? value : 0);
       h += '<span class="nut-bar' + (key === 'exercise' ? '' : ' source-stack') + '">' +
@@ -541,11 +542,15 @@
     h += '<span class="nut-val"><b>' + (est > 0 ? '約' : '') +
       (known ? N.fmt(value) : '—') + '</b><i>' + A().esc(meta[1]) + '</i>' +
       (clickable ? '<em>›</em>' : '') + '</span>';
-    // 例外があるときだけ2行目を足す。ふだんは1行で済む
-    var notes = '';
+    // 2行目: 判定と、例外があればその注記。判定を1行目から外したぶんバーが広くなる
+    var notes = judge
+      ? '<span class="judge-tag ' + cls + '" aria-label="' + A().esc(judgeFull) +
+        '"><i class="judge-mark" aria-hidden="true">' + JUDGE_MARK[cls] + '</i>' + judge + '</span>'
+      : '';
     if (detail && detail.excluded) notes += '<span>採点対象外</span>';
-    if (key !== 'exercise' && cov < 0.999) notes += '<span>カバー ' + Math.round(cov * 100) + '%</span>';
-    if (est > 0) notes += '<span>推定 ' + Math.round(est * 100) + '%</span>';
+    // カバー率は9割を切ったときだけ。ふだん出すと何のことか分からず邪魔になる
+    if (key !== 'exercise' && cov < 0.9) notes += '<span>栄養データ ' + Math.round(cov * 100) + '%</span>';
+    if (est > 0) notes += '<span>うち推定 ' + Math.round(est * 100) + '%</span>';
     if (key === 'exercise' && activity && activity.hasData) {
       notes += '<span>運動記録 ' + N.fmt(activity.exerciseKcal) + ' kcal ＋ ' +
         (activity.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数由来 ') +
@@ -554,7 +559,7 @@
           activity.days != null ? '（データあり ' + activity.days + '/' + activity.totalDays + '日）' : '') +
         '</span>';
     }
-    if (notes) h += '<span class="nut-flags">' + notes + '</span>';
+    h += '<span class="nut-flags">' + notes + '</span>';
     return h + '</' + tag + '>';
   }
 

@@ -128,6 +128,7 @@
     var start = null;
     function down(ev) {
       if (!el.img.getAttribute('src')) return;
+      if (el.root.classList.contains('livetext')) return;   // 長押しで文字を選ばせる
       ev.preventDefault();
       start = pointIn(ev);
       sel = { x: start.x, y: start.y, w: 0, h: 0 };
@@ -168,7 +169,7 @@
     var sw = Math.max(1, Math.round(area.w * scale)), sh = Math.max(1, Math.round(area.h * scale));
 
     // 小さすぎると読めないので、横1600px程度まで拡大する
-    var target = Math.min(2400, Math.max(sw, Math.min(1600, sw * 3)));
+    var target = Math.min(2600, Math.max(sw, Math.min(2000, sw * 3)));
     var k = target / sw;
     var cv = document.createElement('canvas');
     cv.width = Math.round(sw * k); cv.height = Math.round(sh * k);
@@ -176,19 +177,35 @@
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
 
-    // 白黒にしてコントラストを伸ばす。パッケージは光沢で濃淡が浅いことが多い
+    // 白黒にして2値化する。全体の最小最大で伸ばすだけだと、
+    // 汚れや写り込みが1つあるだけで効かなくなるので、大津の方法でしきい値を出す
     var d = ctx.getImageData(0, 0, cv.width, cv.height);
-    var px = d.data, lo = 255, hi = 0, i;
+    var px = d.data, hist = new Uint32Array(256), i, g;
     for (i = 0; i < px.length; i += 4) {
-      var g = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
+      g = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
       px[i] = px[i + 1] = px[i + 2] = g;
-      if (g < lo) lo = g;
-      if (g > hi) hi = g;
+      hist[g]++;
     }
-    var span = Math.max(1, hi - lo);
+    var total = px.length / 4, sum = 0, t;
+    for (t = 0; t < 256; t++) sum += t * hist[t];
+    var sumB = 0, wB = 0, best = 0, th = 128;
+    for (t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (!wB) continue;
+      var wF = total - wB;
+      if (!wF) break;
+      sumB += t * hist[t];
+      var mB = sumB / wB, mF = (sum - sumB) / wF;
+      var between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > best) { best = between; th = t; }
+    }
+    // 文字を黒、地を白に寄せる。境目はそのまま残して輪郭を潰しすぎない
+    var soft = 26;
     for (i = 0; i < px.length; i += 4) {
-      var v = Math.max(0, Math.min(255, ((px[i] - lo) * 255 / span) | 0));
-      px[i] = px[i + 1] = px[i + 2] = v;
+      var v = px[i];
+      var out = v <= th - soft ? 0 : v >= th + soft ? 255
+        : Math.round((v - (th - soft)) * 255 / (soft * 2));
+      px[i] = px[i + 1] = px[i + 2] = out;
     }
     ctx.putImageData(d, 0, 0);
     return cv;
@@ -205,6 +222,9 @@
       setMsg('読み取っています… 0%');
       var cv = cropCanvas();
       return global.Tesseract.recognize(cv, LANG, {
+        // 表の1かたまりとして読む。既定の自動判定だと列を取り違えることがある
+        tessedit_pageseg_mode: '6',
+        preserve_interword_spaces: '1',
         logger: function (m) {
           if (m && m.status === 'recognizing text') {
             setMsg('読み取っています… ' + Math.round((m.progress || 0) * 100) + '%');
@@ -214,8 +234,10 @@
         }
       }).then(function (r) {
         var text = (r && r.data && r.data.text) || '';
-        if (!text.replace(/\s/g, '')) {
-          setMsg('文字を読み取れませんでした。明るい場所で、表の部分だけを大きく囲んでみてください');
+        var digits = (text.match(/[0-9]/g) || []).length;
+        if (!text.replace(/\s/g, '') || digits < 3) {
+          setMsg('うまく読み取れませんでした。明るい場所で表だけを大きく写すか、下の方法をお試しください');
+          showLiveTextHint();
           el.run.disabled = false;
           return null;
         }
@@ -228,12 +250,32 @@
     });
   }
 
+  /* うまく読めないとき用。写真そのものを長押しできるようにして、
+     iPhone標準の文字認識(Live Text)でコピーしてもらう。
+     Apple製のほうが精度は高いが、Webページから自動では呼べない */
+  function showLiveTextHint() {
+    if (!el || el.root.classList.contains('livetext')) return;
+    el.root.classList.add('livetext');
+    var box = document.createElement('div');
+    box.className = 'ocr-live';
+    box.innerHTML = '<b>iPhoneの文字認識を使う</b>' +
+      '<ol><li>上の<b>写真を長押し</b>する</li>' +
+      '<li>出てきたメニューで<b>「テキストを選択」</b>（または文字をなぞる）</li>' +
+      '<li><b>コピー</b>して、この画面を閉じる</li>' +
+      '<li>「文字を貼り付けて入れる」を開いて<b>貼り付け</b></li></ol>' +
+      '<p>iPhone標準の読み取りなので、こちらのほうが正確です。</p>';
+    el.msg.parentNode.insertBefore(box, el.msg.nextSibling);
+  }
+
   /* ---- 入口 ---- */
   function capture() {
     build();
     return new Promise(function (resolve) {
       current = { resolve: resolve };
       el.root.hidden = false;
+      el.root.classList.remove('livetext');
+      var old = el.root.querySelector('.ocr-live');
+      if (old) old.parentNode.removeChild(old);
       sel = null; el.sel.hidden = true; el.run.disabled = true;
       el.img.removeAttribute('src');
       setMsg('カメラを開きます。パッケージの栄養成分表示を、まっすぐ大きく写してください');

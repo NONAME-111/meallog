@@ -61,6 +61,12 @@
   ];
 
   function byOrder(text) {
+    // 2列組(1行に数値が2つ以上)だと、左右に読むぶん順番の前提が崩れる。
+    // まちがった値が黙って入るくらいなら、推定しないほうがよい
+    var multi = text.split(/\n/).some(function (line) {
+      return (line.match(/[0-9]+(?:\.[0-9]+)?\s*(?:kcal|g|mg)\b/gi) || []).length >= 2;
+    });
+    if (multi) return null;
     var re = /([0-9]+(?:\.[0-9]+)?)\s*(kcal|g|mg)\b/gi, m, seq = [];
     while ((m = re.exec(text))) seq.push({ n: parseFloat(m[1]), u: m[2].toLowerCase() });
     var start = 0;
@@ -98,11 +104,15 @@
     return null;
   }
 
+  // 見出しと数値の間に入る文字認識のノイズ(_ @ 。 | など)を読み飛ばす。
+  // 実機の写真では「たんぱく質 _@ 3.2g」のようになり、ここで照合が外れていた
+  var SEP = '[\\s:：.。,、_@|/\\\\()（）\\-—ー~〜]{0,8}';
+
   function readRule(text, rule) {
     var value = '([0-9]+(?:\\.[0-9]+)?)';
     var range = '(?:\\s*(?:~|〜|～|-|から)\\s*' + value + ')?';
     var units = '(kcal|g|mg|ug|mcg)';
-    var re = new RegExp('(?:' + rule.names.join('|') + ')\\s*[:：]?\\s*' +
+    var re = new RegExp('(?:' + rule.names.join('|') + ')' + SEP +
       value + range + '\\s*' + units, 'i');
     var m = text.match(re);
     if (!m) return null;
@@ -149,6 +159,22 @@
       foundKeys.push('carb');
     }
     delete nutrients._labelSugar;
+    // 見出しが1つだけ潰れたときは、エネルギー＝4P+9F+4C から解く。
+    // 数字は読めていることが多いので、これでたいてい5項目そろう
+    var solvedKeys = [];
+    var num = function (k) { return typeof nutrients[k] === 'number' ? nutrients[k] : null; };
+    var kcal = num('kcal'), pro = num('protein'), fat = num('fat'), carb = num('carb');
+    if (kcal != null && kcal > 0) {
+      var solve = null;
+      if (pro != null && carb != null && fat == null) solve = ['fat', (kcal - 4 * pro - 4 * carb) / 9];
+      else if (pro != null && fat != null && carb == null) solve = ['carb', (kcal - 4 * pro - 9 * fat) / 4];
+      else if (fat != null && carb != null && pro == null) solve = ['protein', (kcal - 9 * fat - 4 * carb) / 4];
+      if (solve && isFinite(solve[1]) && solve[1] >= 0 && solve[1] <= 200) {
+        nutrients[solve[0]] = Math.round(solve[1] * 10) / 10;
+        foundKeys.push(solve[0]);
+        solvedKeys.push(solve[0]);
+      }
+    }
     // 見出しがほとんど読めなかったときだけ、表示の順番から当てにいく
     var orderGuess = false;
     if (foundKeys.length < 3) {
@@ -165,6 +191,7 @@
     var p = portion(normalized);
     return {
       nutrients: nutrients, foundKeys: foundKeys, orderGuess: orderGuess,
+      solvedKeys: solvedKeys,
       basis: p.basis, servingLabel: p.servingLabel, grams: p.grams
     };
   }

@@ -1344,11 +1344,16 @@
       if (parsed.servingLabel) body.querySelector('#mServ').value = parsed.servingLabel;
       if (parsed.grams) refGrams = parsed.grams;
       toggleServ(); drawRef();
+      var solved = (parsed.solvedKeys || []).map(function (k) { return F.meta(k)[0]; });
       result.textContent = parsed.foundKeys.length
         ? parsed.foundKeys.map(function (k) { return F.meta(k)[0]; }).join('・') + 'を反映しました。' +
+          (solved.length
+            ? solved.join('・') + 'は読み取れなかったため、カロリーとの計算から出しています。'
+            : '') +
           (parsed.orderGuess
-            ? '見出しが読み取れなかったため、表示の並び順から当てはめています。数値が合っているか必ず確認してください。'
-            : '数値を確認してください。')
+            ? '見出しが読み取れなかったため、表示の並び順から当てはめています。'
+            : '') +
+          '数値が合っているか確認してください。'
         : '読み取れる栄養素がありませんでした。明るい場所で、表の部分だけを大きく写してみてください。';
     }
 
