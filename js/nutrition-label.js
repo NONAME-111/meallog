@@ -4,7 +4,7 @@
 
   var RULES = [
     { key: 'kcal', names: ['エネルギー', '熱量'], unit: 'kcal' },
-    { key: 'protein', names: ['たんぱく質', '蛋白質', 'タンパク質'], unit: 'g' },
+    { key: 'protein', names: ['たんぱく質', 'タンパク質', '[^\s0-9]白質'], unit: 'g' },
     { key: 'fat', names: ['脂質'], unit: 'g' },
     { key: 'carb', names: ['炭水化物'], unit: 'g' },
     { key: '_labelSugar', names: ['糖質'], unit: 'g' },
@@ -49,6 +49,13 @@
       .replace(/キロカロリー/gi, 'kcal');
     // 「た ん ぱく 質」→「たんぱく質」。2回かけると3文字以上の分断も詰まる
     text = text.replace(CJK_SPACE, '$1').replace(CJK_SPACE, '$1');
+    // 行末で数値が割れる（「炭水化物3 1.」＋改行＋「9g」）。数字どうしなら行をつなぐ
+    text = text.replace(/([0-9.])[ \t]*\n[ \t]*(?=[0-9])/g, '$1');
+    // 字間が広いと数字が空白で割れる。「13 4」→「134」「1. 2」→「1.2」「0. 03」→「0.03」
+    for (var i = 0; i < 3; i++) {
+      text = text.replace(/([0-9])[ \t]+(?=[0-9])/g, '$1')
+        .replace(/([0-9])[ \t]*\.[ \t]*(?=[0-9])/g, '$1.');
+    }
     return text;
   }
 
@@ -64,11 +71,13 @@
     // 2列組(1行に数値が2つ以上)だと、左右に読むぶん順番の前提が崩れる。
     // まちがった値が黙って入るくらいなら、推定しないほうがよい
     var multi = text.split(/\n/).some(function (line) {
-      return (line.match(/[0-9]+(?:\.[0-9]+)?\s*(?:kcal|g|mg)\b/gi) || []).length >= 2;
+      return (line.match(/[0-9]+(?:\.[0-9]+)?\s*(?:kcal|kca|g|mg)\b/gi) || []).length >= 2;
     });
     if (multi) return null;
-    var re = /([0-9]+(?:\.[0-9]+)?)\s*(kcal|g|mg)\b/gi, m, seq = [];
-    while ((m = re.exec(text))) seq.push({ n: parseFloat(m[1]), u: m[2].toLowerCase() });
+    var re = /([0-9]+(?:\.[0-9]+)?)\s*(kcal|kca|g|mg)\b/gi, m, seq = [];
+    while ((m = re.exec(text))) {
+      seq.push({ n: parseFloat(m[1]), u: /^kca/i.test(m[2]) ? 'kcal' : m[2].toLowerCase() });
+    }
     var start = 0;
     while (start < seq.length && seq[start].u !== 'kcal') start++;
     if (start >= seq.length) return null;
@@ -111,14 +120,15 @@
   function readRule(text, rule) {
     var value = '([0-9]+(?:\\.[0-9]+)?)';
     var range = '(?:\\s*(?:~|〜|～|-|から)\\s*' + value + ')?';
-    var units = '(kcal|g|mg|ug|mcg)';
+    // kcal の l は し・1・i などに化けやすい。kca まで読めていれば kcal とみなす
+    var units = '(kcal|kca|g|mg|ug|mcg)';
     var re = new RegExp('(?:' + rule.names.join('|') + ')' + SEP +
       value + range + '\\s*' + units, 'i');
     var m = text.match(re);
     if (!m) return null;
     var n = midpoint(m[1], m[2]);
     if (n == null) return null;
-    if (rule.unit === 'kcal') return String(m[3]).toLowerCase() === 'kcal' ? n : null;
+    if (rule.unit === 'kcal') return /^kca/i.test(String(m[3])) ? n : null;
     return convert(n, m[3], rule.unit);
   }
 
