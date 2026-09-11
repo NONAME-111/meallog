@@ -116,7 +116,7 @@
       var per = m.basis === 'serving' ? ('1' + (m.servingLabel || '食')) : '100g';
       return '<div class="row between" style="padding:8px 0;border-top:1px solid var(--line)">' +
         '<span class="grow ellip"><b class="small">' + A().esc(m.name) + '</b>' +
-        '<span class="tiny muted"> ' + per + 'あたり ' +
+        '<span class="tiny muted"> ' + (m.brand ? A().esc(m.brand) + ' ・ ' : '') + per + 'あたり ' +
         Math.round((m.nutrients && m.nutrients.kcal) || 0) + ' kcal' +
         (m.barcode ? ' ・ ' + A().esc(m.barcode) : '') + '</span></span>' +
         '<button class="tiny" data-delmy="' + A().esc(m.id) + '" ' +

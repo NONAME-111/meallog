@@ -167,7 +167,8 @@
         var registered = linkedNames && linkedNames[F.norm(e.name)]
           ? ' <span class="tag registered">登録済み</span>' : '';
         h += '<div class="item" data-entry="' + A().esc(e.id) + '">' +
-          '<div class="grow"><div class="item-name ellip">' + A().esc(e.name) + registered + '</div>' +
+          '<div class="grow"><div class="item-name ellip">' + A().esc(e.name) + registered +
+          (e.brand ? ' <span class="item-brand">' + A().esc(e.brand) + '</span>' : '') + '</div>' +
           '<div class="item-sub">' + pfc + '</div></div>' +
           '<div class="item-metrics"><span class="item-amount">' + A().esc(amountText(e)) + '</span>' +
           '<span class="item-kcal">' + Math.round(n.kcal || 0) + '</span></div></div>';
@@ -941,8 +942,8 @@
       name: m.name, basis: m.basis || '100g', per: merged.nutrients,
       unit: unit,
       defaultAmount: m.basis === 'serving' ? 1 : 100,
-      ref: { type: 'my', id: m.id }, note: m.brand || '', est: mergedEst,
-      linked: !!m.linked
+      ref: { type: 'my', id: m.id }, note: m.brand || '', brand: m.brand || '',
+      est: mergedEst, linked: !!m.linked
     };
   }
   function fromEntry(e) {
@@ -964,7 +965,8 @@
     return {
       name: e.name, basis: (e.unit === 'g') ? '100g' : 'serving', per: per,
       unit: e.unit || 'g', defaultAmount: amount, ref: e.ref || { type: 'manual' },
-      note: '', est: cleanEstimate(e.est, masterMerge.appliedKeys), seq: e.seq
+      note: e.brand || '', brand: e.brand || '',
+      est: cleanEstimate(e.est, masterMerge.appliedKeys), seq: e.seq
     };
   }
 
@@ -1116,7 +1118,7 @@
     fill.addEventListener('click', function () {
       A().pushSheet(function () { openAmount(state, slot, pick, existingId, onPick); });
       var preset = {
-        name: pick.name, basis: isG ? '100g' : 'serving',
+        name: pick.name, brand: pick.brand || '', basis: isG ? '100g' : 'serving',
         servingLabel: isG ? '' : pick.unit, nutrients: pick.per,
         est: pick.est || null,
         myFoodId: pick.ref && pick.ref.type === 'my' ? pick.ref.id : null,
@@ -1146,6 +1148,7 @@
         var rec = {
           id: existingId || undefined, seq: pick.seq,
           date: state.date, slot: slot, name: pick.name,
+          brand: pick.brand || undefined,
           amount: c.amount, unit: pick.unit, nutrients: result.nutrients,
           est: result.est || undefined, ref: pick.ref
         };
@@ -1239,11 +1242,11 @@
           '<li>写真の上で、表の部分を<b>指でなぞって囲む</b></li>' +
           '<li>「この範囲を読み取る」を押すと<b>下の各欄に入ります</b></li>' +
         '</ol>' +
-        '<details class="nut-more"><summary>文字を貼り付けて入れる</summary>' +
+        '<details class="nut-more" id="ocrTextBox"><summary>読み取った文字（貼り付けもできます）</summary>' +
           '<textarea id="mOcr" class="ocr-input" rows="6" ' +
           'placeholder="栄養成分表示の文字を貼り付け"></textarea>' +
           '<button class="btn line wide" id="mParse">各欄へ反映する</button></details>' +
-        '<div class="tiny muted" id="mParseResult" role="status"></div></div>' +
+        '<div class="parse-result" id="mParseResult" role="status"></div></div>' +
       '<div class="card"><h3>栄養成分</h3>' +
         '<div class="nut-edit-grid">' + nutrientFields(EDIT_MAIN, preset, initialEstKeys) + '</div>' +
         '<details class="nut-more"><summary>その他の栄養素</summary>' +
@@ -1371,8 +1374,12 @@
         if (!text) return;
         ocr.value = text;
         applyOcr(false);
-        var box = body.querySelector('#mParseResult');
-        if (box) box.scrollIntoView({ block: 'center' });
+        // 読み取った文字は必ず見えるようにする。折りたたんだままだと、
+        // 認識できていても「読み取れない」としか分からず、原因も切り分けられない
+        var box = body.querySelector('#ocrTextBox');
+        if (box) box.open = true;
+        var res = body.querySelector('#mParseResult');
+        if (res) res.scrollIntoView({ block: 'center' });
       });
     });
 
@@ -1387,6 +1394,8 @@
     if (preset.ocrText) {
       ocr.value = preset.ocrText;
       applyOcr(false);
+      var ocrBox = body.querySelector('#ocrTextBox');
+      if (ocrBox) ocrBox.open = true;
     }
 
     var unlink = body.querySelector('#mUnlink');
@@ -1448,9 +1457,12 @@
         : Promise.resolve(null);
       estimateJob.catch(function () { return null; }).then(function (filled) {
         return S.MyFoods.byName(name).then(function (sameName) {
+          // 欄が空のときは、すでに登録されているメーカー名を消さない
+          var typedBrand = body.querySelector('#mBrand').value.trim();
+          var keptBrand = typedBrand || preset.brand || (sameName && sameName.brand) || '';
           var rec = {
             id: preset.myFoodId || (sameName && sameName.id) || undefined,
-            name: name, brand: body.querySelector('#mBrand').value.trim(),
+            name: name, brand: keptBrand,
             basis: basis.value, servingLabel: body.querySelector('#mServ').value.trim() || '個',
             barcode: preset.barcode ? String(preset.barcode) : ((sameName && sameName.barcode) || ''),
             nutrients: filled ? filled.nutrients : nut,
@@ -1463,6 +1475,7 @@
       }).then(function (saved) {
         A().toast('栄養素を登録しました。あとは数量を決めて記録してください', 4000);
         var savedPick = fromMyFood(saved);
+        savedPick.brand = saved.brand || '';
         if (preset.recordAmount > 0) savedPick.defaultAmount = preset.recordAmount;
         // まだ記録は済んでいないので、次に何をすればよいか数量画面に出す
         savedPick.justRegistered = true;

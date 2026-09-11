@@ -11,6 +11,8 @@
   var LANG = 'jpn';
 
   var el = null, current = null, loadP = null;
+  var shotFile = null;      // 撮った写真そのもの。切り出しの元にする
+  var lastCrop = '';        // 読み取りに使った画像。うまくいかないとき画面に出す
 
   function esc(s) { return global.App ? global.App.esc(s) : String(s); }
 
@@ -119,6 +121,7 @@
       el.file.value = '';
       if (!f) { if (!el.img.getAttribute('src')) finish(null); return; }
       if (el.img.src) { try { URL.revokeObjectURL(el.img.src); } catch (e) { void e; } }
+      shotFile = f;
       el.img.src = URL.createObjectURL(f);
       sel = null; el.sel.hidden = true; el.run.disabled = true;
       setMsg('読み取りたい「栄養成分表示」の範囲を、指でなぞって囲んでください');
@@ -160,13 +163,26 @@
   }
 
   /* ---- 切り出しと下ごしらえ ---- */
-  function cropCanvas() {
+
+  /* iPhoneの写真はExifで回転が入る。img の naturalWidth と canvas の drawImage で
+     向きの扱いが食い違うと、まったく別の場所を切り出してしまう。
+     createImageBitmap で向きを確定させてから使う。 */
+  function sourceImage() {
+    if (!shotFile || !global.createImageBitmap) return Promise.resolve(el.img);
+    return global.createImageBitmap(shotFile, { imageOrientation: 'from-image' })
+      .catch(function () { return el.img; });
+  }
+
+  function cropCanvas(src) {
     var img = el.img;
     var box = img.getBoundingClientRect();
-    var scale = img.naturalWidth / box.width;   // 表示座標 → 元画像の座標
+    // 画面上の位置は「割合」で持つ。元画像の寸法が何であれずれない
     var area = sel || { x: 0, y: 0, w: box.width, h: box.height };
-    var sx = Math.round(area.x * scale), sy = Math.round(area.y * scale);
-    var sw = Math.max(1, Math.round(area.w * scale)), sh = Math.max(1, Math.round(area.h * scale));
+    var fx = area.x / Math.max(1, box.width), fy = area.y / Math.max(1, box.height);
+    var fw = area.w / Math.max(1, box.width), fh = area.h / Math.max(1, box.height);
+    var baseW = src.width || src.naturalWidth, baseH = src.height || src.naturalHeight;
+    var sx = Math.round(fx * baseW), sy = Math.round(fy * baseH);
+    var sw = Math.max(1, Math.round(fw * baseW)), sh = Math.max(1, Math.round(fh * baseH));
 
     // 小さすぎると読めないので、横1600px程度まで拡大する
     var target = Math.min(2600, Math.max(sw, Math.min(2000, sw * 3)));
@@ -175,7 +191,7 @@
     cv.width = Math.round(sw * k); cv.height = Math.round(sh * k);
     var ctx = cv.getContext('2d', { willReadFrequently: true });
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+    ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
 
     // 白黒にして2値化する。全体の最小最大で伸ばすだけだと、
     // 汚れや写り込みが1つあるだけで効かなくなるので、大津の方法でしきい値を出す
@@ -220,7 +236,9 @@
         return null;
       }
       setMsg('読み取っています… 0%');
-      var cv = cropCanvas();
+      return sourceImage().then(function (src) {
+      var cv = cropCanvas(src);
+      try { lastCrop = cv.toDataURL('image/png'); } catch (e) { lastCrop = ''; }
       return global.Tesseract.recognize(cv, LANG, {
         // 表の1かたまりとして読む。既定の自動判定だと列を取り違えることがある
         tessedit_pageseg_mode: '6',
@@ -244,6 +262,7 @@
         finish(text);
         return text;
       });
+      });
     }).catch(function (e) {
       setMsg('読み取れませんでした: ' + ((e && e.message) || e));
       el.run.disabled = false;
@@ -258,7 +277,11 @@
     el.root.classList.add('livetext');
     var box = document.createElement('div');
     box.className = 'ocr-live';
-    box.innerHTML = '<b>iPhoneの文字認識を使う</b>' +
+    box.innerHTML = (lastCrop
+      ? '<p class="ocr-crop-note">読み取りに使った画像です。表とちがう場所が写っていたら、' +
+        'なぞり直してください。</p><img class="ocr-crop" src="' + lastCrop + '" alt="読み取りに使った画像">'
+      : '') +
+      '<b>iPhoneの文字認識を使う</b>' +
       '<ol><li>上の<b>写真を長押し</b>する</li>' +
       '<li>出てきたメニューで<b>「テキストを選択」</b>（または文字をなぞる）</li>' +
       '<li><b>コピー</b>して、この画面を閉じる</li>' +
