@@ -1,9 +1,17 @@
 /* ocr.js - パッケージの栄養成分表示をカメラで撮って読み取る。
 
-   iOSの「テキストをスキャン」はキーボードの機能で、Webページから呼び出す手段が無い。
-   実機のメニューにも出ないという報告があったため、アプリ側で完結させる:
-     カメラを開く → 写真の中の栄養成分表示の範囲を指でなぞる → 読み取る → 各欄へ入れる
-   文字認識は Tesseract を初回だけ読み込む(数MB)。写真は端末内だけで処理し、保存も送信もしない。 */
+   実機で検証した結果、読み取りの主役を入れ替えた。
+
+   ・Tesseract(ブラウザで動く文字認識)は、印刷物のスキャンなら読めるが、
+     光沢のある袋を手で撮った写真では日本語がほぼ崩れる。
+     実機の出力例: 「の ング の ジン メア」「ジジ ンプ クン ンー タク 名 名 衣」。
+     切り出し位置は合っていて(「(1袋 50g 当 たり)」「食塩 相当 重 0.6g」は読めている)、
+     認識の質そのものが足りていない。
+   ・iPhoneには Live Text(Appleの文字認識)が入っていて、こちらは同じ写真をきれいに読む。
+     Webページから自動では呼べないが、写真を長押しして選ぶことはできる。
+
+   そこで、写真を長押しして選ぶ方式を既定にし、Tesseractは「自動で試す」に格下げした。
+   写真は端末内だけで処理し、保存も送信もしない。 */
 (function (global) {
   'use strict';
 
@@ -12,9 +20,7 @@
 
   var el = null, current = null, loadP = null;
   var shotFile = null;      // 撮った写真そのもの。切り出しの元にする
-  var lastCrop = '';        // 読み取りに使った画像。うまくいかないとき画面に出す
-
-  function esc(s) { return global.App ? global.App.esc(s) : String(s); }
+  var sel = null;           // なぞって決めた範囲(画像の表示座標)
 
   /* ---- Tesseractの読み込み(初回だけ) ---- */
   function loadTesseract(onProgress) {
@@ -49,8 +55,15 @@
         '<div class="ocr-sel" id="ocrSel" hidden></div>' +
       '</div>' +
       '<div class="ocr-foot">' +
+        '<ol class="ocr-steps" id="ocrSteps">' +
+          '<li>上の写真の<b>栄養成分表示を長押し</b>する</li>' +
+          '<li>文字が選ばれたら、端をドラッグして<b>表全体を囲む</b></li>' +
+          '<li><b>「コピー」</b>を押して、下のボタンへ</li>' +
+        '</ol>' +
         '<p class="ocr-msg" id="ocrMsg" role="status" aria-live="polite"></p>' +
-        '<button class="btn wide" data-ocr="run" id="ocrRun" disabled>この範囲を読み取る</button>' +
+        '<button class="btn wide" data-ocr="paste" id="ocrPaste">コピーした文字を貼り付けて反映</button>' +
+        '<button class="btn sub wide" data-ocr="auto" id="ocrAuto">自動で読み取ってみる</button>' +
+        '<button class="btn wide" data-ocr="run" id="ocrRun" hidden disabled>この範囲を読み取る</button>' +
       '</div>' +
       '<input type="file" id="ocrFile" accept="image/*" capture="environment" hidden>';
     document.body.appendChild(root);
@@ -59,7 +72,10 @@
       stage: root.querySelector('#ocrStage'),
       img: root.querySelector('#ocrShot'),
       sel: root.querySelector('#ocrSel'),
+      steps: root.querySelector('#ocrSteps'),
       msg: root.querySelector('#ocrMsg'),
+      paste: root.querySelector('#ocrPaste'),
+      auto: root.querySelector('#ocrAuto'),
       run: root.querySelector('#ocrRun'),
       file: root.querySelector('#ocrFile')
     };
@@ -68,6 +84,22 @@
   }
 
   function setMsg(t) { if (el) el.msg.textContent = t || ''; }
+
+  /* 長押しで選ぶ画面(既定) と、なぞって自動で読む画面 の切り替え */
+  function setMode(mode) {
+    el.root.classList.toggle('auto', mode === 'auto');
+    el.steps.hidden = mode === 'auto';
+    el.paste.hidden = mode === 'auto';
+    el.auto.hidden = mode === 'auto';
+    el.run.hidden = mode !== 'auto';
+    if (mode === 'auto') {
+      sel = null; el.sel.hidden = true; el.run.disabled = true;
+      setMsg('読み取りたい「栄養成分表示」の範囲を、指でなぞって囲んでください');
+    } else {
+      el.sel.hidden = true;
+      setMsg('');
+    }
+  }
 
   function finish(text) {
     if (!current) return;
@@ -78,15 +110,12 @@
       if (el.img.src) { try { URL.revokeObjectURL(el.img.src); } catch (e) { void e; } }
       el.img.removeAttribute('src');
       el.sel.hidden = true;
-      el.run.disabled = true;
       setMsg('');
     }
     done.resolve(text || null);
   }
 
-  /* ---- 範囲指定(指でなぞる) ---- */
-  var sel = null;   // 画像の表示座標での {x, y, w, h}
-
+  /* ---- 範囲指定(自動読み取りのときだけ) ---- */
   function drawSel() {
     if (!sel || sel.w < 8 || sel.h < 8) { el.sel.hidden = true; el.run.disabled = true; return; }
     var box = el.img.getBoundingClientRect(), stage = el.stage.getBoundingClientRect();
@@ -113,6 +142,8 @@
       if (!b) return;
       if (b.dataset.ocr === 'close') return finish(null);
       if (b.dataset.ocr === 'retake') return el.file.click();
+      if (b.dataset.ocr === 'paste') return pasteFromClipboard();
+      if (b.dataset.ocr === 'auto') return setMode('auto');
       if (b.dataset.ocr === 'run') return run();
     });
 
@@ -123,15 +154,14 @@
       if (el.img.src) { try { URL.revokeObjectURL(el.img.src); } catch (e) { void e; } }
       shotFile = f;
       el.img.src = URL.createObjectURL(f);
-      sel = null; el.sel.hidden = true; el.run.disabled = true;
-      setMsg('読み取りたい「栄養成分表示」の範囲を、指でなぞって囲んでください');
+      setMode('select');
     });
 
-    // 画像の上をなぞって範囲を作る
+    // 自動読み取りのときだけ、なぞって範囲を作る
     var start = null;
     function down(ev) {
       if (!el.img.getAttribute('src')) return;
-      if (el.root.classList.contains('livetext')) return;   // 長押しで文字を選ばせる
+      if (!el.root.classList.contains('auto')) return;   // 長押しで文字を選ばせる
       ev.preventDefault();
       start = pointIn(ev);
       sel = { x: start.x, y: start.y, w: 0, h: 0 };
@@ -151,7 +181,7 @@
       if (!start) return;
       start = null;
       if (sel && sel.w >= 8 && sel.h >= 8) {
-        setMsg('この範囲でよければ「この範囲を読み取る」を押してください。やり直すときはもう一度なぞってください');
+        setMsg('この範囲でよければ「この範囲を読み取る」を押してください');
       }
     }
     el.stage.addEventListener('touchstart', down, { passive: false });
@@ -162,7 +192,34 @@
     global.addEventListener('mouseup', up);
   }
 
-  /* ---- 切り出しと下ごしらえ ---- */
+  /* ---- コピーした文字を受け取る ---- */
+  function looksLikeLabel(text) {
+    var t = String(text || '');
+    return /[0-9]/.test(t) && /(kcal|kca|カロリー|熱量|エネルギー|たんぱく|蛋白|脂質|炭水化物|食塩)/i.test(t);
+  }
+
+  function pasteFromClipboard() {
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      setMsg('この端末では自動で貼り付けできません。閉じてから「読み取った文字」の欄に貼り付けてください');
+      return;
+    }
+    setMsg('コピーした文字を読み込んでいます…');
+    navigator.clipboard.readText().then(function (text) {
+      if (!text || !text.trim()) {
+        setMsg('コピーされた文字がありません。写真を長押しして文字を選び、「コピー」を押してください');
+        return;
+      }
+      if (!looksLikeLabel(text)) {
+        setMsg('栄養成分表示らしい文字が見つかりません。表の部分をもう一度選んでコピーしてください');
+        return;
+      }
+      finish(text);
+    }).catch(function () {
+      setMsg('貼り付けを許可してください。できないときは、閉じてから「読み取った文字」の欄に直接貼り付けられます');
+    });
+  }
+
+  /* ---- 切り出し(自動読み取り用) ---- */
 
   /* iPhoneの写真はExifで回転が入る。img の naturalWidth と canvas の drawImage で
      向きの扱いが食い違うと、まったく別の場所を切り出してしまう。
@@ -173,18 +230,19 @@
       .catch(function () { return el.img; });
   }
 
+  /* 切り出して拡大し、白黒にする。
+     2値化までは掛けない。Tesseractは内部で領域ごとにしきい値を決めるので、
+     こちらで1つのしきい値に潰すとかえって崩れる(実機で確認済み)。 */
   function cropCanvas(src) {
-    var img = el.img;
-    var box = img.getBoundingClientRect();
-    // 画面上の位置は「割合」で持つ。元画像の寸法が何であれずれない
+    var box = el.img.getBoundingClientRect();
     var area = sel || { x: 0, y: 0, w: box.width, h: box.height };
+    // 画面上の位置は「割合」で持つ。元画像の寸法が何であれずれない
     var fx = area.x / Math.max(1, box.width), fy = area.y / Math.max(1, box.height);
     var fw = area.w / Math.max(1, box.width), fh = area.h / Math.max(1, box.height);
     var baseW = src.width || src.naturalWidth, baseH = src.height || src.naturalHeight;
     var sx = Math.round(fx * baseW), sy = Math.round(fy * baseH);
     var sw = Math.max(1, Math.round(fw * baseW)), sh = Math.max(1, Math.round(fh * baseH));
 
-    // 小さすぎると読めないので、横1600px程度まで拡大する
     var target = Math.min(2600, Math.max(sw, Math.min(2000, sw * 3)));
     var k = target / sw;
     var cv = document.createElement('canvas');
@@ -193,35 +251,11 @@
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
 
-    // 白黒にして2値化する。全体の最小最大で伸ばすだけだと、
-    // 汚れや写り込みが1つあるだけで効かなくなるので、大津の方法でしきい値を出す
     var d = ctx.getImageData(0, 0, cv.width, cv.height);
-    var px = d.data, hist = new Uint32Array(256), i, g;
+    var px = d.data, i, g;
     for (i = 0; i < px.length; i += 4) {
       g = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114) | 0;
       px[i] = px[i + 1] = px[i + 2] = g;
-      hist[g]++;
-    }
-    var total = px.length / 4, sum = 0, t;
-    for (t = 0; t < 256; t++) sum += t * hist[t];
-    var sumB = 0, wB = 0, best = 0, th = 128;
-    for (t = 0; t < 256; t++) {
-      wB += hist[t];
-      if (!wB) continue;
-      var wF = total - wB;
-      if (!wF) break;
-      sumB += t * hist[t];
-      var mB = sumB / wB, mF = (sum - sumB) / wF;
-      var between = wB * wF * (mB - mF) * (mB - mF);
-      if (between > best) { best = between; th = t; }
-    }
-    // 文字を黒、地を白に寄せる。境目はそのまま残して輪郭を潰しすぎない
-    var soft = 26;
-    for (i = 0; i < px.length; i += 4) {
-      var v = px[i];
-      var out = v <= th - soft ? 0 : v >= th + soft ? 255
-        : Math.round((v - (th - soft)) * 255 / (soft * 2));
-      px[i] = px[i + 1] = px[i + 2] = out;
     }
     ctx.putImageData(d, 0, 0);
     return cv;
@@ -231,63 +265,31 @@
     el.run.disabled = true;
     loadTesseract(setMsg).then(function (ok) {
       if (!ok) {
-        setMsg('文字認識を読み込めませんでした。通信状況を確かめるか、下の欄に貼り付けてください');
+        setMsg('文字認識を読み込めませんでした。写真を長押しして選ぶ方法をお使いください');
         el.run.disabled = false;
         return null;
       }
       setMsg('読み取っています… 0%');
       return sourceImage().then(function (src) {
-      var cv = cropCanvas(src);
-      try { lastCrop = cv.toDataURL('image/png'); } catch (e) { lastCrop = ''; }
-      return global.Tesseract.recognize(cv, LANG, {
-        // 表の1かたまりとして読む。既定の自動判定だと列を取り違えることがある
-        tessedit_pageseg_mode: '6',
-        preserve_interword_spaces: '1',
-        logger: function (m) {
-          if (m && m.status === 'recognizing text') {
-            setMsg('読み取っています… ' + Math.round((m.progress || 0) * 100) + '%');
-          } else if (m && m.status) {
-            setMsg('準備しています…（' + m.status + '）');
+        var cv = cropCanvas(src);
+        return global.Tesseract.recognize(cv, LANG, {
+          logger: function (m) {
+            if (m && m.status === 'recognizing text') {
+              setMsg('読み取っています… ' + Math.round((m.progress || 0) * 100) + '%');
+            } else if (m && m.status) {
+              setMsg('準備しています…（' + m.status + '）');
+            }
           }
-        }
-      }).then(function (r) {
-        var text = (r && r.data && r.data.text) || '';
-        var digits = (text.match(/[0-9]/g) || []).length;
-        if (!text.replace(/\s/g, '') || digits < 3) {
-          setMsg('うまく読み取れませんでした。明るい場所で表だけを大きく写すか、下の方法をお試しください');
-          showLiveTextHint();
-          el.run.disabled = false;
-          return null;
-        }
-        finish(text);
-        return text;
-      });
+        }).then(function (r) {
+          var text = (r && r.data && r.data.text) || '';
+          finish(text);
+          return text;
+        });
       });
     }).catch(function (e) {
       setMsg('読み取れませんでした: ' + ((e && e.message) || e));
       el.run.disabled = false;
     });
-  }
-
-  /* うまく読めないとき用。写真そのものを長押しできるようにして、
-     iPhone標準の文字認識(Live Text)でコピーしてもらう。
-     Apple製のほうが精度は高いが、Webページから自動では呼べない */
-  function showLiveTextHint() {
-    if (!el || el.root.classList.contains('livetext')) return;
-    el.root.classList.add('livetext');
-    var box = document.createElement('div');
-    box.className = 'ocr-live';
-    box.innerHTML = (lastCrop
-      ? '<p class="ocr-crop-note">読み取りに使った画像です。表とちがう場所が写っていたら、' +
-        'なぞり直してください。</p><img class="ocr-crop" src="' + lastCrop + '" alt="読み取りに使った画像">'
-      : '') +
-      '<b>iPhoneの文字認識を使う</b>' +
-      '<ol><li>上の<b>写真を長押し</b>する</li>' +
-      '<li>出てきたメニューで<b>「テキストを選択」</b>（または文字をなぞる）</li>' +
-      '<li><b>コピー</b>して、この画面を閉じる</li>' +
-      '<li>「文字を貼り付けて入れる」を開いて<b>貼り付け</b></li></ol>' +
-      '<p>iPhone標準の読み取りなので、こちらのほうが正確です。</p>';
-    el.msg.parentNode.insertBefore(box, el.msg.nextSibling);
   }
 
   /* ---- 入口 ---- */
@@ -296,12 +298,9 @@
     return new Promise(function (resolve) {
       current = { resolve: resolve };
       el.root.hidden = false;
-      el.root.classList.remove('livetext');
-      var old = el.root.querySelector('.ocr-live');
-      if (old) old.parentNode.removeChild(old);
-      sel = null; el.sel.hidden = true; el.run.disabled = true;
+      setMode('select');
       el.img.removeAttribute('src');
-      setMsg('カメラを開きます。パッケージの栄養成分表示を、まっすぐ大きく写してください');
+      setMsg('カメラを開きます。栄養成分表示を、まっすぐ大きく写してください');
       el.file.click();
     });
   }

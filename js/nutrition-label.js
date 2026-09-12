@@ -9,7 +9,7 @@
     { key: 'carb', names: ['炭水化物'], unit: 'g' },
     { key: '_labelSugar', names: ['糖質'], unit: 'g' },
     { key: 'fiber', names: ['食物繊維'], unit: 'g' },
-    { key: 'salt', names: ['食塩相当量'], unit: 'g' },
+    { key: 'salt', names: ['食塩相当[量重畳]', '食塩相当'], unit: 'g' },
     { key: 'sodium', names: ['ナトリウム'], unit: 'mg' },
     { key: 'satfat', names: ['飽和脂肪酸'], unit: 'g' },
     { key: 'monofat', names: ['一価不飽和脂肪酸', '一価不飽和'], unit: 'g' },
@@ -135,7 +135,8 @@
   function portion(text) {
     var hundred = text.match(/(?:栄養成分表示\s*)?100\s*g\s*(?:当たり|あたり)/i);
     if (hundred) return { basis: '100g', servingLabel: '', grams: 100 };
-    var m = text.match(/(?:栄養成分表示\s*)?(?:1\s*)?(日分|袋|本|個|食|パック|包|粒|錠|枚|杯|人前)\s*(?:[（(]\s*([0-9]+(?:\.[0-9]+)?)\s*g\s*[）)])?\s*(?:当たり|あたり)/i);
+    // 内容量は「1袋(50g)当たり」「1袋50g当たり」のどちらの書き方もある
+    var m = text.match(/(?:栄養成分表示\s*)?(?:1\s*)?(日分|袋|本|個|食|パック|包|粒|錠|枚|杯|人前)\s*(?:[（(]?\s*([0-9]+(?:\.[0-9]+)?)\s*g\s*[）)]?)?\s*(?:当たり|あたり)/i);
     if (!m) return { basis: null, servingLabel: null, grams: null };
     return { basis: 'serving', servingLabel: m[1], grams: m[2] ? parseFloat(m[2]) : null };
   }

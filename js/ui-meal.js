@@ -1239,9 +1239,12 @@
         '<button class="btn wide" id="mCamera">📷 カメラで読み取る</button>' +
         '<ol class="scan-steps">' +
           '<li>カメラで栄養成分表示を<b>まっすぐ大きく</b>写す</li>' +
-          '<li>写真の上で、表の部分を<b>指でなぞって囲む</b></li>' +
-          '<li>「この範囲を読み取る」を押すと<b>下の各欄に入ります</b></li>' +
+          '<li>写真の中の表を<b>長押しして文字を選ぶ</b>（iPhoneの文字認識）</li>' +
+          '<li><b>「コピー」</b>→「貼り付けて反映」で<b>下の各欄に入ります</b></li>' +
         '</ol>' +
+        '<div class="small muted" style="margin:-2px 2px 8px">' +
+        'iPhone標準の文字認識を使うので、これがいちばん正確です。' +
+        'アプリだけで自動的に読む方法も選べますが、光沢のある袋では崩れやすいです。</div>' +
         '<details class="nut-more" id="ocrTextBox"><summary>読み取った文字（貼り付けもできます）</summary>' +
           '<textarea id="mOcr" class="ocr-input" rows="6" ' +
           'placeholder="栄養成分表示の文字を貼り付け"></textarea>' +
