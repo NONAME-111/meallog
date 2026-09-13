@@ -15,15 +15,16 @@
   var SOURCE_TYPES = ['normal', 'sweets', 'alcohol', 'supplement'];
   var ALCOHOL_NAME = /酒|ビール|ワイン|焼酎|日本酒|ハイボール|ウイスキー|ウィスキー|ブランデー|チューハイ|サワー|梅酒|カクテル|ホッピー|発泡酒|シャンパン|モルツ|エール|ストロング|スーパードライ|贅沢搾り|ほろよい|氷結|檸檬堂|金麦|淡麗|本麒麟|クリアアサヒ/i;
 
+  /* 配点は Nutrition.WEIGHTS と同じで、合計はちょうど100点 */
   var GROUPS = [
-    { key: 'kcal', icon: '🔥', label: 'カロリー', weight: 20,
+    { key: 'kcal', icon: '🔥', label: 'カロリー', weight: 30,
       scored: ['kcal'], shown: ['kcal'], more: [] },
-    { key: 'pfc', icon: '🍚', label: 'PFCバランス', weight: 28,
+    { key: 'pfc', icon: '🍚', label: 'PFCバランス', weight: 24,
       scored: ['protein', 'fat', 'sugar'], shown: ['protein', 'fat', 'sugar', 'carb'], more: [] },
-    { key: 'quality', icon: '🧂', label: '塩分・脂質の質', weight: 16,
+    { key: 'quality', icon: '🧂', label: '塩分・脂質の質', weight: 12,
       scored: ['salt', 'satfat'], shown: ['salt', 'satfat', 'chol'],
       more: ['monofat', 'polyfat', 'n3', 'n6'] },
-    { key: 'micro', icon: '🥬', label: 'ビタミン・ミネラル', weight: 36,
+    { key: 'micro', icon: '🥬', label: 'ビタミン・ミネラル', weight: 24,
       scored: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc'],
       shown: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc', 'vite'],
       more: ['k', 'mg', 'zn', 'vitd', 'niacin', 'vitb6', 'vitb12', 'folate'] },
@@ -323,6 +324,10 @@
       '<div><div class="score-num" style="color:' + color + '">' + (dataShort ? '—' : t) +
       (dataShort ? '' : '<small> / 100点</small>') + '</div><div class="small muted">' + label + '</div></div></div>' +
       (dataShort ? '<div class="tiny muted">主要な採点項目の半分以上で栄養データが不足しています。</div>' : '') +
+      (sc.kcalCap != null && t != null && t >= sc.kcalCap
+        ? '<div class="tiny muted">カロリーが目標を大きく超えたため、この日の上限を ' +
+          sc.kcalCap + ' 点にしています。</div>'
+        : '') +
       (sc.hasEstimated ? '<div class="tiny muted">この点数には食品成分表からの推定値を含みます。</div>' : '') +
       (note ? '<div class="tiny muted">' + A().esc(note) + '</div>' : '') +
       (missing.length && hasEntries ? '<div class="tiny muted">' + missing.map(jpSlot).join('・') +
@@ -394,6 +399,10 @@
       h += '</section>';
     });
     return h + '<div class="tiny muted score-source">' +
+      '<b>配点（合計100点）</b>：カロリー30・PFCバランス24・ビタミン/ミネラル24・塩分と脂質の質12・運動10。' +
+      '体重の増減を決めるのは収支なのでカロリーを最大にし、減量中に筋肉量を左右するたんぱく質を次に置いています。' +
+      'カロリーは目標の5%超過から減点が始まり、30%超で0点です（不足は15%まで許容）。' +
+      'さらに、超過が1割を超えた日は総合点にも上限をかけます（25%超で70点、40%超で40点）。<br>' +
       '「栄養データ○%」は、その日食べたもののうち、その栄養素の値が分かっている割合です。' +
       '低いときは実際にはもっと摂れている可能性があります。' +
       '「うち推定○%」は、食品成分表から補った割合です。<br>' +

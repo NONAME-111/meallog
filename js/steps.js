@@ -256,11 +256,7 @@
       '<p class="tiny muted" id="healthSourceNote"></p></div>' +
       '<button class="btn wide" id="healthSave" disabled>この記録元から取り込む</button>' +
       '<p class="tiny muted">ZIPは外部へ送らず、この端末内だけで読み取ります。同じ日の歩数は加算せず、選んだ記録元の最新合計へ置き換えます。</p>' +
-      '<details class="step-shortcut"><summary>1日分を数字で入力する場合</summary>' +
-      '<label class="fld"><span>日付と歩数</span><textarea id="stepsText" rows="4" placeholder="2026-09-08:8432">' +
-      A.esc(initial || '') + '</textarea></label>' +
-      '<p class="small muted" id="stepsPreview" aria-live="polite"></p>' +
-      '<button class="btn sub wide" id="stepsSave" disabled>入力した歩数を取り込む</button></details>');
+      '<p class="tiny muted">1日分だけなら、この画面を閉じて「歩数」の欄に直接入力できます。</p>');
 
     var fileInput = body.querySelector('#healthFile');
     var status = body.querySelector('#healthStatus');
@@ -340,25 +336,6 @@
       });
     });
 
-    var input = body.querySelector('#stepsText'), textSave = body.querySelector('#stepsSave');
-    function textPreview() {
-      try {
-        var rows = parse(input.value);
-        body.querySelector('#stepsPreview').textContent = rows.length + '日分 (' + rows[0].date + ' ～ ' + rows[rows.length - 1].date + ')';
-        textSave.disabled = false;
-      } catch (e) {
-        body.querySelector('#stepsPreview').textContent = input.value.trim() ? e.message : '';
-        textSave.disabled = true;
-      }
-    }
-    input.addEventListener('input', textPreview);
-    textSave.addEventListener('click', function () {
-      textSave.disabled = true;
-      importText(input.value).then(function (n) {
-        A.closeSheet(); A.toast(n + '日分の歩数を取り込みました'); A.render();
-      }).catch(function (e) { A.toast('取り込めませんでした: ' + e.message); textPreview(); });
-    });
-    textPreview();
   }
 
   function receiveUrl() {

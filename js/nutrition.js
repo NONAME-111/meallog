@@ -86,10 +86,16 @@
   }
 
   /* ---- 採点 ---- */
+  /* 合計はちょうど100。画面に出る配点と足し算が合うようにしてある。
+     ダイエットの採点なので、体重の増減を決めるカロリーを最大に、
+     次に減量中の筋肉量を左右するたんぱく質を置く。 */
   var WEIGHTS = [
-    ['kcal', 20], ['protein', 10], ['fat', 10], ['sugar', 8], ['fiber', 8],
-    ['salt', 10], ['satfat', 6], ['ca', 6], ['fe', 6],
-    ['vita', 4], ['vitb1', 4], ['vitb2', 4], ['vitc', 4], ['exercise', 10]
+    ['kcal', 30],
+    ['protein', 12], ['fat', 6], ['sugar', 6],
+    ['salt', 8], ['satfat', 4],
+    ['fiber', 8], ['ca', 4], ['fe', 4],
+    ['vita', 2], ['vitb1', 2], ['vitb2', 2], ['vitc', 2],
+    ['exercise', 10]
   ];
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -98,8 +104,11 @@
     if (!goal) return 1;
     var r = intake / goal;
     if (kind === 'range') {
-      var dev = Math.abs(intake - goal) / goal;
-      return clamp(1 - Math.max(0, dev - 0.10) * 3, 0, 1);
+      // 超過と不足で勾配を変える。超過は減量を直接打ち消すので厳しく、
+      // 不足は目標がすでに赤字なのである程度は許す(ただし極端な不足は筋肉が落ちる)
+      var diff = (intake - goal) / goal;
+      if (diff >= 0) return clamp(1 - Math.max(0, diff - 0.05) * 4, 0, 1);
+      return clamp(1 - Math.max(0, -diff - 0.15) * 4, 0, 1);
     }
     if (kind === 'min') return clamp(r, 0, 1);
     if (kind === 'band') {
@@ -139,49 +148,75 @@
     });
     var insufficient = excludedCount * 2 >= detail.length || includedWeight <= 0;
     var total = insufficient ? null : Math.round(rawPoints * 100 / includedWeight);
+
+    // カロリーを大きく超えた日は、ほかの栄養素が満点でも総合点に上限をかける。
+    // 減量の観点では、その日は前進していないため。
+    var kcalCap = null;
+    var kd = detail.filter(function (x) { return x.key === 'kcal'; })[0];
+    if (total != null && kd && !kd.excluded && kd.goal) {
+      var over = kd.intake / kd.goal - 1;
+      if (over > 0.10) {
+        kcalCap = Math.round(clamp(100 - (over - 0.10) * 200, 40, 100));
+        if (total > kcalCap) total = kcalCap;
+      }
+    }
     return {
       total: total, detail: detail, insufficient: insufficient,
-      excludedCount: excludedCount,
+      excludedCount: excludedCount, kcalCap: kcalCap,
       hasEstimated: detail.some(function (d) { return !d.excluded && d.estimated > 0; })
     };
   }
 
-  /* ---- コメント生成 ---- */
-  function comments(sc, tg, ctx) {
-    var out = [];
-    var d = sc.detail;
-    var byKey = {};
-    d.forEach(function (x) { byKey[x.key] = x; });
+  /* ---- コメント生成 ----
+     摂取量の外れ方が大きいものから3件だけ出す。
+     並べ替えの重みは配点と同じ考え方で、カロリーを最優先にしている。 */
+  var MAX_COMMENTS = 3;
 
-    if (sc.insufficient && ctx && ctx.hasEntries) {
-      out.push({ icon: '📝', text: '栄養データが足りないため、今日は点数を出していません。記録の栄養素を補うと採点できます。' });
-      return out;
+  function comments(sc, tg, ctx) {
+    var d = sc.detail, byKey = {};
+    d.forEach(function (x) { byKey[x.key] = x; });
+    var hasEntries = !!(ctx && ctx.hasEntries);
+
+    if (sc.insufficient && hasEntries) {
+      return [{ icon: '📝', text: '栄養データが足りないため、今日は点数を出していません。記録の栄養素を補うと採点できます。' }];
     }
 
     var e = byKey.kcal;
+    if (e && !e.excluded && e.intake === 0) {
+      return [{ icon: '📝', text: 'まだ記録がありません。食べたものを登録すると採点できます。' }];
+    }
+
+    // sev = 外れ方の大きさ。マイナスは「良い知らせ」で、枠が余ったときだけ出す
+    var cand = [], kcalNote = null;
+
     if (e && !e.excluded) {
-      if (e.intake === 0) out.push({ icon: '📝', text: 'まだ記録がありません。食べたものを登録すると採点できます。' });
-      else if (e.ratio < 0.7) out.push({ icon: '⚠️', text: '摂取カロリーが目標より大きく少ないです（' + Math.round(e.intake) + ' / ' + e.goal + ' kcal）。記録漏れが無いか確認してください。極端な不足は筋肉量の低下を招きます。' });
-      else if (e.ratio > 1.15) out.push({ icon: '🔥', text: '目標より ' + Math.round(e.intake - e.goal) + ' kcal 多く摂っています。次の食事か翌日で調整しましょう。' });
-      else out.push({ icon: '✅', text: 'カロリーは目標の範囲内です（' + Math.round(e.intake) + ' / ' + e.goal + ' kcal）。' });
+      var diff = (e.intake - e.goal) / e.goal;
+      if (diff > 0.05) {
+        kcalNote = { pin: true, sev: diff * 3, icon: '🔥',
+          text: '摂取カロリーが目標より ' + Math.round(e.intake - e.goal) + ' kcal 多いです（' +
+            Math.round(e.intake) + ' / ' + e.goal + ' kcal）。' +
+            (diff > 0.25 ? 'この量が続くと体重は減りません。主食か間食を1品減らすところから調整しましょう。'
+              : '次の食事か翌日で調整しましょう。') };
+      } else if (diff < -0.15) {
+        kcalNote = { pin: true, sev: -diff * 3, icon: '⚠️',
+          text: '摂取カロリーが目標より大きく少ないです（' + Math.round(e.intake) + ' / ' + e.goal +
+            ' kcal）。記録漏れが無いか確認してください。極端な不足は筋肉量の低下を招きます。' };
+      } else {
+        kcalNote = { pin: false, sev: -1, icon: '✅',
+          text: 'カロリーは目標の範囲内です（' + Math.round(e.intake) + ' / ' + e.goal + ' kcal）。' };
+      }
+      cand.push(kcalNote);
     }
 
-    // 運動は食品由来の栄養不足とは分け、常に運動用アイコンで案内する。
-    var exercise = byKey.exercise;
-    if (exercise && !exercise.excluded && exercise.ratio < 1) {
-      out.push({ icon: '🏃', text: '運動は ' + Math.round(exercise.intake) + ' / ' +
-        Math.round(exercise.goal) + ' kcal相当です。歩数や短い運動を少し足すと目標に近づきます。' });
-    }
-
-    // 不足しているもの(比率の低い順)
-    var lacks = d.filter(function (x) {
-      return x.key !== 'exercise' && !x.excluded && (x.kind === 'min' || x.kind === 'band') && x.ratio < 0.8 &&
-        (ctx && ctx.hasEntries);
-    }).sort(function (a, b) { return a.ratio - b.ratio; }).slice(0, 3);
-    lacks.forEach(function (x) {
+    // 不足(下限のある栄養素)
+    d.forEach(function (x) {
+      if (x.key === 'exercise' || x.excluded || !hasEntries) return;
+      if (x.kind !== 'min' && x.kind !== 'band') return;
+      if (!(x.ratio < 0.8)) return;
       var m = global.Foods.meta(x.key);
-      out.push({
-        icon: '🥬',
+      cand.push({
+        sev: (1 - x.ratio) * (x.key === 'protein' ? 2.2 : x.key === 'fiber' ? 1.4 : 1),
+        icon: x.key === 'protein' ? '🍖' : '🥬',
         text: (x.estimated > 0 ? '推定を含む目安では、' : '') + m[0] +
           (x.estimated > 0 ? 'が不足している可能性があります（' : 'が不足しています（') +
           fmt(x.intake) + ' / ' + fmt(x.goal) + ' ' + m[1] + '、達成率' +
@@ -189,14 +224,15 @@
       });
     });
 
-    // 摂りすぎているもの
-    var overs = d.filter(function (x) {
-      return !x.excluded && (x.kind === 'max' || x.kind === 'band') && x.intake > (x.max || x.goal);
-    }).sort(function (a, b) { return b.ratio - a.ratio; }).slice(0, 3);
-    overs.forEach(function (x) {
-      var m = global.Foods.meta(x.key);
+    // 摂りすぎ(上限のある栄養素)
+    d.forEach(function (x) {
+      if (x.excluded || !hasEntries) return;
+      if (x.kind !== 'max' && x.kind !== 'band') return;
       var lim = x.max || x.goal;
-      out.push({
+      if (!(x.intake > lim)) return;
+      var m = global.Foods.meta(x.key);
+      cand.push({
+        sev: (x.intake / lim - 1) * (x.key === 'salt' || x.key === 'satfat' ? 1.6 : 1.2),
         icon: x.key === 'vita' ? '⚠️' : '🧂',
         text: (x.estimated > 0 ? '推定を含む目安では、' : '') + m[0] +
           (x.estimated > 0 ? 'が目安を超えている可能性があります（' : 'が目安を超えています（') +
@@ -204,7 +240,23 @@
       });
     });
 
-    if (ctx && ctx.hasEntries && out.length < 3) {
+    // 運動は食事より優先度を下げる
+    var exercise = byKey.exercise;
+    if (exercise && !exercise.excluded && exercise.ratio < 1) {
+      cand.push({ sev: (1 - exercise.ratio) * 0.6, icon: '🏃',
+        text: '運動は ' + Math.round(exercise.intake) + ' / ' + Math.round(exercise.goal) +
+          ' kcal相当です。歩数や短い運動を少し足すと目標に近づきます。' });
+    }
+
+    cand.sort(function (a, b) { return b.sev - a.sev; });
+    // カロリーが外れている日は、総合点に上限までかけている当人なので必ず先頭に出す
+    if (kcalNote && kcalNote.pin) {
+      cand = [kcalNote].concat(cand.filter(function (x) { return x !== kcalNote; }));
+    }
+    var out = cand.slice(0, MAX_COMMENTS).map(function (x) {
+      return { icon: x.icon, text: x.text };
+    });
+    if (hasEntries && !cand.some(function (x) { return x.sev > 0; })) {
       out.push({ icon: '👍', text: 'バランスよく摂れています。この調子で続けましょう。' });
     }
     return out;
