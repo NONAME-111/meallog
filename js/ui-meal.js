@@ -37,10 +37,16 @@
       ]);
     }).then(function (r) {
       var entries = r[0], exercises = r[1], tinfo = r[2], dt = r[3], myfoods = r[4];
-      var mealTimes = (r[5] && r[5].mealTimes) || {};
+      var body = r[5];
+      var mealTimes = (body && body.mealTimes) || {};
       var tg = tinfo.tg;
       var totals = dt.totals;
-      var burned = exercises.reduce(function (a, x) { return a + (x.kcal || 0); }, 0);
+      // 歩数と活動エネルギーも消費に入れる。採点タブと同じ計算を使い、
+      // 記録タブだけ0kcalに見える食い違いをなくす
+      var activity = (Views.advice && Views.advice._activityFor)
+        ? Views.advice._activityFor(exercises, body)
+        : { value: exercises.reduce(function (a, x) { return a + (x.kcal || 0); }, 0) };
+      var burned = activity.value || 0;
       var linkedNames = {};
       myfoods.forEach(function (m) { if (m.linked) linkedNames[F.norm(m.name)] = true; });
 
@@ -59,7 +65,7 @@
           html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }), linkedNames,
             mealTimes[sl.key] || '');
         });
-        html += exerciseHtml(exercises, burned);
+        html += exerciseHtml(exercises, burned, activity);
         html += fabHtml(entries);
         html += '<div class="tiny muted" style="padding:4px 2px 0">栄養値の出典: ' +
           A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') + '</div>';
@@ -194,12 +200,25 @@
     return (Math.round(e.amount * 100) / 100) + ' ' + u;
   }
 
-  function exerciseHtml(list, burned) {
+  function exerciseHtml(list, burned, activity) {
     var burnedDisplay = Math.max(0, Math.round(Number(burned) || 0));
     var h = '<div class="card"><div class="slot-head"><span class="slot-name">🏃 運動</span>' +
       '<span class="slot-kcal">' + (burnedDisplay ? '-' + burnedDisplay : '0') + '<small> kcal</small></span></div>';
-    if (!list.length) h += '<div class="empty">記録がありません</div>';
-    else list.forEach(function (x) {
+    // カラダタブで入れた歩数・活動エネルギーも、ここに並べて見えるようにする
+    var stepKcal = activity ? Math.round(activity.stepKcal || 0) : 0;
+    var fromSteps = activity && activity.walkSource === 'steps' && activity.steps != null;
+    var fromActive = activity && activity.walkSource === 'active';
+    if (stepKcal > 0 && (fromSteps || fromActive)) {
+      h += '<div class="item" data-fab-tab="body"><div class="grow">' +
+        '<div class="item-name ellip">👟 ' +
+        (fromActive ? '活動エネルギー（ヘルスケアの実測）' : '歩数から') + '</div>' +
+        '<div class="item-sub">' +
+        (activity.steps != null ? Math.round(activity.steps).toLocaleString() + ' 歩' : 'ヘルスケア') +
+        ' ・ カラダタブの記録</div></div>' +
+        '<div class="item-kcal">-' + stepKcal + '</div></div>';
+    }
+    if (!list.length && !stepKcal) h += '<div class="empty">記録がありません</div>';
+    list.forEach(function (x) {
       h += '<div class="item" data-ex="' + A().esc(x.id) + '"><div class="grow">' +
         '<div class="item-name ellip">' + A().esc(x.name) + '</div>' +
         '<div class="item-sub">' + Math.round(x.minutes) + ' 分</div></div>' +

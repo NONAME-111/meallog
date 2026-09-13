@@ -62,7 +62,7 @@
         setMsg('バーコードを枠内に（縦向きでも読めます）');
         startLoop();
       }).catch(function (err) {
-        setMsg('カメラを使えません（' + shortErr(err) + '）。「写真で読取」をお試しください');
+        setMsg('カメラを使えません（' + shortErr(err) + '）。「写真から読取」をお試しください');
       });
     });
   }
@@ -85,7 +85,10 @@
     }));
   }
 
-  function startCamera() {
+  /* video を渡せば、バーコード以外の画面でも同じカメラを使える。
+     別々に getUserMedia を呼ぶと許可を二度聞かれるので、ここに集約する。 */
+  function startCamera(video) {
+    video = video || el.video;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return Promise.reject(new Error('unsupported'));
     }
@@ -94,20 +97,33 @@
     // 前回のストリームが生きていれば、それを使い回す(許可ダイアログを出さないため)
     if (live()) {
       stream.getTracks().forEach(function (t) { t.enabled = true; });
-      el.video.srcObject = stream;
-      el.video.setAttribute('playsinline', '');
-      return el.video.play();
+      video.srcObject = stream;
+      video.setAttribute('playsinline', '');
+      return video.play();
     }
 
     return navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: false
     }).then(function (s) {
       stream = s;
-      el.video.srcObject = s;
-      el.video.setAttribute('playsinline', '');
-      return el.video.play();
+      video.srcObject = s;
+      video.setAttribute('playsinline', '');
+      return video.play();
     });
+  }
+
+  /* 映像だけ止めて、許可は保持する(barcode の stopCamera と同じ作法) */
+  function pauseCamera(video) {
+    video = video || el.video;
+    if (video) {
+      try { video.pause(); } catch (e) { void e; }
+      video.srcObject = null;
+    }
+    if (!stream) return;
+    stream.getTracks().forEach(function (t) { t.enabled = false; });
+    if (releaseTimer) clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(releaseCamera, KEEP_MS);
   }
 
   // 本当にカメラを手放す(次に開くときは許可を聞かれる)
@@ -394,6 +410,8 @@
   global.Barcode = {
     scan: scan, lookup: lookup, searchByName: searchByName,
     cancel: function () { finish(null); },
+    // 栄養成分表示の読み取りでも同じカメラを使う
+    camera: { attach: startCamera, detach: pauseCamera, shortErr: shortErr },
     // 縦向きバーコードの復号を机上で確かめるための入口
     _decodeImage: function (img) {
       return loadZXing().then(function () { return decodeImageZXing(img); });

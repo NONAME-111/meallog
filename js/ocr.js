@@ -11,6 +11,10 @@
      Webページから自動では呼べないが、写真を長押しして選ぶことはできる。
 
    そこで、写真を長押しして選ぶ方式を既定にし、Tesseractは「自動で試す」に格下げした。
+
+   撮影はアプリ内で行う(バーコードと同じカメラを共有)。<input capture> だと
+   撮ったあとにiOSの「写真を使用/やり直す」が必ず挟まるため、シャッターを自前で持つ。
+   撮影済みの写真からも読めるように「写真から選ぶ」も置いてある。
    写真は端末内だけで処理し、保存も送信もしない。 */
 (function (global) {
   'use strict';
@@ -51,6 +55,7 @@
         '<button class="ocr-btn" data-ocr="retake">撮り直す</button>' +
       '</div>' +
       '<div class="ocr-stage" id="ocrStage">' +
+        '<video id="ocrVideo" playsinline muted hidden></video>' +
         '<img id="ocrShot" alt="撮影した写真">' +
         '<div class="ocr-sel" id="ocrSel" hidden></div>' +
       '</div>' +
@@ -61,16 +66,21 @@
           '<li><b>「コピー」</b>を押して、下のボタンへ</li>' +
         '</ol>' +
         '<p class="ocr-msg" id="ocrMsg" role="status" aria-live="polite"></p>' +
+        '<button class="btn wide" data-ocr="shoot" id="ocrShoot" hidden>● 撮影する</button>' +
+        '<button class="btn sub wide" data-ocr="pick" id="ocrPick" hidden>写真から選ぶ</button>' +
         '<button class="btn wide" data-ocr="paste" id="ocrPaste">コピーした文字を貼り付けて反映</button>' +
         '<button class="btn sub wide" data-ocr="auto" id="ocrAuto">自動で読み取ってみる</button>' +
         '<button class="btn wide" data-ocr="run" id="ocrRun" hidden disabled>この範囲を読み取る</button>' +
       '</div>' +
-      '<input type="file" id="ocrFile" accept="image/*" capture="environment" hidden>';
+      '<input type="file" id="ocrFile" accept="image/*" hidden>';
     document.body.appendChild(root);
     el = {
       root: root,
       stage: root.querySelector('#ocrStage'),
+      video: root.querySelector('#ocrVideo'),
       img: root.querySelector('#ocrShot'),
+      shoot: root.querySelector('#ocrShoot'),
+      pick: root.querySelector('#ocrPick'),
       sel: root.querySelector('#ocrSel'),
       steps: root.querySelector('#ocrSteps'),
       msg: root.querySelector('#ocrMsg'),
@@ -85,14 +95,19 @@
 
   function setMsg(t) { if (el) el.msg.textContent = t || ''; }
 
-  /* 長押しで選ぶ画面(既定) と、なぞって自動で読む画面 の切り替え */
-  function setMode(mode) {
-    el.root.classList.toggle('auto', mode === 'auto');
-    el.steps.hidden = mode === 'auto';
-    el.paste.hidden = mode === 'auto';
-    el.auto.hidden = mode === 'auto';
-    el.run.hidden = mode !== 'auto';
-    if (mode === 'auto') {
+  /* 画面は3つ: 撮影(camera) / 長押しで選ぶ(select) / なぞって自動(auto) */
+  function setMode(next) {
+    el.root.classList.toggle('auto', next === 'auto');
+    el.root.classList.toggle('shooting', next === 'camera');
+    el.video.hidden = next !== 'camera';
+    el.img.hidden = next === 'camera';
+    el.shoot.hidden = next !== 'camera';
+    el.pick.hidden = next !== 'camera';
+    el.steps.hidden = next !== 'select';
+    el.paste.hidden = next !== 'select';
+    el.auto.hidden = next !== 'select';
+    el.run.hidden = next !== 'auto';
+    if (next === 'auto') {
       sel = null; el.sel.hidden = true; el.run.disabled = true;
       setMsg('読み取りたい「栄養成分表示」の範囲を、指でなぞって囲んでください');
     } else {
@@ -101,11 +116,54 @@
     }
   }
 
+  /* 映像から1枚切り出す。iOSのカメラ画面を通さないので、確認の一手間が要らない */
+  function shoot() {
+    var v = el.video;
+    if (!v || !v.videoWidth) { setMsg('カメラの準備ができていません'); return; }
+    var cv = document.createElement('canvas');
+    cv.width = v.videoWidth; cv.height = v.videoHeight;
+    cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
+    cv.toBlob(function (blob) {
+      if (!blob) { setMsg('写真を取り込めませんでした'); return; }
+      usePhoto(blob);
+    }, 'image/jpeg', 0.95);
+  }
+
+  function usePhoto(fileOrBlob) {
+    if (el.img.src) { try { URL.revokeObjectURL(el.img.src); } catch (e) { void e; } }
+    shotFile = fileOrBlob;
+    el.img.src = URL.createObjectURL(fileOrBlob);
+    stopCamera();
+    setMode('select');
+  }
+
+  function startCamera() {
+    var api = global.Barcode && global.Barcode.camera;
+    if (!api) {
+      // 映像を出せないときは、これまでどおり端末のカメラ画面を使う
+      el.file.click();
+      return;
+    }
+    setMsg('カメラを起動しています…');
+    api.attach(el.video).then(function () {
+      setMsg('栄養成分表示を、まっすぐ大きく写してください');
+    }).catch(function (err) {
+      var why = api.shortErr ? api.shortErr(err) : '';
+      setMsg('カメラを使えません' + (why ? '（' + why + '）' : '') + '。「写真から選ぶ」をお試しください');
+    });
+  }
+
+  function stopCamera() {
+    var api = global.Barcode && global.Barcode.camera;
+    if (api && api.detach) api.detach(el.video);
+  }
+
   function finish(text) {
     if (!current) return;
     var done = current;
     current = null;
     if (el) {
+      stopCamera();
       el.root.hidden = true;
       if (el.img.src) { try { URL.revokeObjectURL(el.img.src); } catch (e) { void e; } }
       el.img.removeAttribute('src');
@@ -141,7 +199,9 @@
       var b = ev.target.closest('[data-ocr]');
       if (!b) return;
       if (b.dataset.ocr === 'close') return finish(null);
-      if (b.dataset.ocr === 'retake') return el.file.click();
+      if (b.dataset.ocr === 'retake') { setMode('camera'); startCamera(); return; }
+      if (b.dataset.ocr === 'shoot') return shoot();
+      if (b.dataset.ocr === 'pick') return el.file.click();
       if (b.dataset.ocr === 'paste') return pasteFromClipboard();
       if (b.dataset.ocr === 'auto') return setMode('auto');
       if (b.dataset.ocr === 'run') return run();
@@ -150,11 +210,8 @@
     el.file.addEventListener('change', function () {
       var f = el.file.files && el.file.files[0];
       el.file.value = '';
-      if (!f) { if (!el.img.getAttribute('src')) finish(null); return; }
-      if (el.img.src) { try { URL.revokeObjectURL(el.img.src); } catch (e) { void e; } }
-      shotFile = f;
-      el.img.src = URL.createObjectURL(f);
-      setMode('select');
+      if (!f) return;
+      usePhoto(f);
     });
 
     // 自動読み取りのときだけ、なぞって範囲を作る
@@ -298,10 +355,9 @@
     return new Promise(function (resolve) {
       current = { resolve: resolve };
       el.root.hidden = false;
-      setMode('select');
       el.img.removeAttribute('src');
-      setMsg('カメラを開きます。栄養成分表示を、まっすぐ大きく写してください');
-      el.file.click();
+      setMode('camera');
+      startCamera();
     });
   }
 
