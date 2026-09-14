@@ -6,7 +6,10 @@
      色だけに意味を持たせず、必ず記号と文字を併記する */
   --judge-ok:#1c74bb; --judge-warn:#96520a; --judge-bad:#870034;
   /* Okabe-Ito系の色相を使い、赤緑だけに頼らず凡例の文字でも区別する */
-  --src-normal:#009e73;--src-sweets:#d55e00;--src-alcohol:#0072b2;--src-supplement:#e69f00;
+  /* お酒=赤紫・サプリ=明るい橙。暗い背景でも沈まないように選び直した(tools/cud_check.py で検証) */
+  --src-normal:#009e73;--src-sweets:#d55e00;--src-alcohol:#cc79a7;--src-supplement:#f0b020;
+  /* 適正ゾーン。暗い背景でも見えるよう鮮やかな空色にした(暗い地でコントラスト7.4) */
+  --zone:#56b4e9;
   --bg:#f4f5f7; --card:#fff; --line:#e3e6ea;
   --tx:#20242a; --tx2:#4f5863; --tx3:#66717d;
   --hdr:56px; --tabh:calc(54px + env(safe-area-inset-bottom));
@@ -188,7 +191,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 /* 適正ゾーン。ここに入っていればよい、を目標値の文字なしで伝える。
    バーの地(白)とはっきり差が出る色にすること。--green-l はカード用で薄すぎた(1.01:1) */
 .nut-bar > u.nut-zone{position:absolute;top:0;bottom:0;z-index:0;
-  background:#c3e5d2;text-decoration:none}
+  background:var(--zone);text-decoration:none}
 .nut-bar > i{position:relative;z-index:1}
 .nut-val{width:76px;text-align:right;font-size:11px;color:var(--tx2);flex:none}
 .ok{background:var(--judge-ok)} .low{background:var(--judge-warn)}
@@ -252,7 +255,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .source-legend span{display:flex;align-items:center;gap:4px}
 .source-legend i{display:inline-block;width:12px;height:12px;border-radius:3px}
 .source-legend i{border:1px solid rgba(20,26,32,.22)}
-.source-legend i.lg-zone{background:#c3e5d2;border-color:#8dc4a6}
+.source-legend i.lg-zone{background:var(--zone);border-color:#2f8fc4}
 .source-legend i.lg-line{width:3px;border:0;background:var(--tx);border-radius:1px}
 .aim-legend{display:flex;flex-wrap:wrap;gap:3px 12px;margin:4px 0 1px;color:var(--tx2);font-size:11px}
 .aim-legend b{font-size:12px;margin-right:2px}
@@ -425,8 +428,7 @@ body.sheet-open .fab-wrap{display:none}
   .btn.sub{background:#2b3540;color:var(--tx);border:1px solid #3e4a57}
   .chip{background:#2b3540;border:1px solid #3e4a57}
   .nut-bar{background:#171d24;border-color:#3d4854}
-  .nut-bar > u.nut-zone{background:#2c5943}
-  .source-legend i.lg-zone{background:#2c5943;border-color:#4e8266}
+  .source-legend i.lg-zone{border-color:#8fd0f5}
   .nut-detail.tappable:active{background:#242a31}
   .exercise-connect{background:#222c28}
   .step-method{background:#19372a}

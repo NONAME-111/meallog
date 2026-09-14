@@ -604,10 +604,19 @@
           if (c) openComboUse(state, slot, c); else A().backSheet();
         });
       } else if (kind === 'used') {
-        // 実績: 直近に食べたときの記録をそのまま複製する
-        S.Entries.recent(400).then(function (rows) {
-          var e2 = rows.filter(function (x) { return x.name === id; })[0];
-          if (!e2) { A().backSheet(); return; }
+        // 実績: 直近に食べたときの記録をそのまま複製する。
+        // 一覧を作ったのと同じ topUsed の結果から探す。直近400件だけを見ていたため、
+        // しばらく食べていない食品(例: 最後が1年以上前)はタップしても開けなかった
+        usedList().then(function (all) {
+          var hit = all.filter(function (x) { return x.name === id; })[0];
+          if (hit && hit.latest) return hit.latest;
+          // 念のため全記録からも探す(一覧の作成後に件数が変わった場合など)
+          return S.Entries.topUsed(100000).then(function (every) {
+            var h2 = every.filter(function (x) { return x.name === id; })[0];
+            return h2 ? h2.latest : null;
+          });
+        }).then(function (e2) {
+          if (!e2) { A().backSheet(); A().toast('この食品の記録を開けませんでした'); return; }
           var pick = fromEntry(e2);
           pick.defaultAmount = parseFloat(row.dataset.amt) || pick.defaultAmount;
           openAmount(state, slot, pick);
@@ -1164,14 +1173,25 @@
           });
           return null;
         }
+        // 並び順(seq)は、新規なら今の時刻、更新なら保存済みの値をそのまま使う。
+        // pick.seq を使うと、履歴から足した新規は元の記録の古い時刻を引き継いで一番上に入り、
+        // 栄養素の編集を挟んだ更新は途中で値が落ちて一番下へ移っていた
+        var seqJob = existingId
+          ? S.Entries.byDate(state.date).then(function (rows) {
+              var cur = rows.filter(function (x) { return x.id === existingId; })[0];
+              return cur && cur.seq != null ? cur.seq : undefined;
+            })
+          : Promise.resolve(undefined);
+        return seqJob.then(function (seq) {
         var rec = {
-          id: existingId || undefined, seq: pick.seq,
+          id: existingId || undefined, seq: seq,
           date: state.date, slot: slot, name: pick.name,
           brand: pick.brand || undefined,
           amount: c.amount, unit: pick.unit, nutrients: result.nutrients,
           est: result.est || undefined, ref: pick.ref
         };
-        return S.Entries.put(rec).then(function () {
+        return S.Entries.put(rec);
+        }).then(function () {
           if (!existingId && state.date === S.ymd(new Date())) {
             return S.Body.setMealTime(state.date, slot, currentTime(), true);
           }
