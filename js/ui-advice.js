@@ -413,7 +413,7 @@
     return '<div class="source-legend" aria-label="バーの読み方">' +
       '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
       '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span>' +
-      '<span><i class="lg-zone"></i>うすい緑＝適正の範囲</span>' +
+      '<span><i class="lg-zone"></i>網かけ＝適正の範囲</span>' +
       '<span><i class="lg-line"></i>基準値</span></div>' +
       '<div class="aim-legend"><span><b>↓</b>これ以下に抑える</span>' +
       '<span><b>↕</b>この範囲に</span><span><b>↑</b>これ以上とる</span>' +

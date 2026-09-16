@@ -8,8 +8,11 @@
   /* Okabe-Ito系の色相を使い、赤緑だけに頼らず凡例の文字でも区別する */
   /* お酒=赤紫・サプリ=明るい橙。暗い背景でも沈まないように選び直した(tools/cud_check.py で検証) */
   --src-normal:#009e73;--src-sweets:#d55e00;--src-alcohol:#cc79a7;--src-supplement:#f0b020;
-  /* 適正ゾーン。暗い背景でも見えるよう鮮やかな空色にした(暗い地でコントラスト7.4) */
-  --zone:#56b4e9;
+  /* 適正ゾーン。網かけの線=空色、下地=うすい水色、枠=灰青。
+     内訳の塗り4色と同じ「面」に見せないため、色ではなく模様で役割を分ける。
+     線を濃くすると3型色覚で通常食品の緑と重なる(#2e8fc7 で ΔE1.4)ので、この明るさを保つこと。
+     枠の灰青は彩度が低く、内訳4色とは最小 ΔE14.4。食品の色とは混ざらない */
+  --zone:#56b4e9; --zone-bg:#dceefb; --zone-edge:#5f6c78;
   --bg:#f4f5f7; --card:#fff; --line:#e3e6ea;
   --tx:#20242a; --tx2:#4f5863; --tx3:#66717d;
   --hdr:56px; --tabh:calc(54px + env(safe-area-inset-bottom));
@@ -195,9 +198,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
   opacity:1;z-index:3;text-decoration:none;
   box-shadow:0 0 0 1.5px var(--card)}
 /* 適正ゾーン。ここに入っていればよい、を目標値の文字なしで伝える。
-   バーの地(白)とはっきり差が出る色にすること。--green-l はカード用で薄すぎた(1.01:1) */
-.nut-bar > u.nut-zone{position:absolute;top:0;bottom:0;z-index:0;
-  background:var(--zone);border-radius:99px;text-decoration:none}
+   塗りつぶすと内訳(通常食品/お菓子/お酒/サプリ)と同じ面に見え、
+   「5つ目の食事分類」と受け取られてしまうため、斜めの網かけ＋枠にしている。
+   模様そのものが役割の違いなので、色が判らなくても取り違えない。 */
+.nut-bar > u.nut-zone{position:absolute;top:0;bottom:0;z-index:0;border-radius:99px;
+  background-color:var(--zone-bg);
+  background-image:repeating-linear-gradient(135deg,
+    var(--zone) 0 2px, transparent 2px 5px);
+  box-shadow:inset 0 0 0 1px var(--zone-edge);text-decoration:none}
 .nut-bar > i{position:relative;z-index:1}
 .nut-val{width:76px;text-align:right;font-size:11px;color:var(--tx2);flex:none}
 .ok{background:var(--judge-ok)} .low{background:var(--judge-warn)}
@@ -261,8 +269,16 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .source-legend span{display:flex;align-items:center;gap:4px}
 .source-legend i{display:inline-block;width:12px;height:12px;border-radius:3px}
 .source-legend i{border:1px solid rgba(20,26,32,.22)}
-.source-legend i.lg-zone{background:var(--zone);border-color:#2f8fc4}
+/* 凡例の見本もバーと同じ網かけにする。見本と現物が違うと読み替えが要る */
+.source-legend i.lg-zone{background-color:var(--zone-bg);
+  background-image:repeating-linear-gradient(135deg,
+    var(--zone) 0 2px, transparent 2px 5px);
+  border-color:var(--zone-edge)}
 .source-legend i.lg-line{width:3px;border:0;background:var(--tx);border-radius:1px}
+/* 「今日ではない日を開いています」の注意。読み飛ばされては困るので枠で囲む */
+.date-warn{margin:0 0 10px;padding:8px 10px;border-radius:8px;font-size:13px;line-height:1.5;
+  color:var(--warning-text);background:rgba(215,130,20,.10);
+  border:1px solid rgba(215,130,20,.45)}
 .aim-legend{display:flex;flex-wrap:wrap;gap:3px 12px;margin:4px 0 1px;color:var(--tx2);font-size:11px}
 .aim-legend b{font-size:12px;margin-right:2px}
 .nut-bar.source-stack > i + i,.summary .bar.source-stack > i + i{
@@ -426,7 +442,9 @@ body.sheet-open .fab-wrap{display:none}
   :root{--bg:#101419;--card:#1d242c;--line:#3a4551;--tx:#edf1f5;--tx2:#c3ccd6;--tx3:#9eabb8;
     --green-l:#1e3a2c;--accent-text:#8bdcaf;--warning-text:#ffc078;--danger-text:#ff9b94;--link-text:#8acbff;
     /* 暗い背景でも同じ考え方。水色→黄橙→明るい赤で、最小ΔEは13.8 */
-    --judge-ok:#86c8ff;--judge-warn:#ffcf70;--judge-bad:#ff6060}
+    --judge-ok:#86c8ff;--judge-warn:#ffcf70;--judge-bad:#ff6060;
+    /* 網かけの下地だけ暗くする。線(空色)と枠(灰青)は地(#171d24)から浮くのでそのまま */
+    --zone-bg:#16303f}
   .seg{background:#252b32}
   .seg button.on{background:#39414b}
   .tab{color:var(--tx3)}
@@ -434,7 +452,6 @@ body.sheet-open .fab-wrap{display:none}
   .btn.sub{background:#2b3540;color:var(--tx);border:1px solid #3e4a57}
   .chip{background:#2b3540;border:1px solid #3e4a57}
   .nut-bar{background:#171d24;border-color:#3d4854}
-  .source-legend i.lg-zone{border-color:#8fd0f5}
   .nut-detail.tappable:active{background:#242a31}
   .exercise-connect{background:#222c28}
   .step-method{background:#19372a}

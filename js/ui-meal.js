@@ -358,10 +358,13 @@
 
   function openAdd(state, slot, opts) {
     opts = opts || {};
-    var st = (A().state.settings) || {};
-    var src = opts.src || st.lastAddSrc || 'used';
-    if (!SRC_TABS.filter(function (t) { return t.key === src; }).length) src = 'used';
-    var histSlot = (opts.histSlot != null) ? opts.histSlot : (st.lastHistSlot || '');
+    /* 開いた食事の履歴から始める。朝食を足すときは朝食の履歴、昼食なら昼食の履歴。
+       前回の区分を覚えていたころは、昼食に足すのに朝食の履歴が出ることがあった。
+       同じ食事は繰り返すので、ここが既定だと探す手間が一番小さい。
+       区分と絞り込みはシートを開いているあいだは保つ(restorer が引き継ぐ)。 */
+    var src = opts.src || 'hist';
+    if (!SRC_TABS.filter(function (t) { return t.key === src; }).length) src = 'hist';
+    var histSlot = (opts.histSlot != null) ? opts.histSlot : slot;
 
     // 上半分は動かさない。件数で高さが変わるとタップ位置がずれるため
     var html = '' +
@@ -471,11 +474,19 @@
         return;
       }
       histList().then(function (all2) {
+        // その食事の履歴がまだ無いときは、空欄で行き止まりにせず全部の履歴へ広げる
+        if (!all2.length && histSlot) {
+          histSlot = '';
+          markSlotChip();
+          browse();
+          return;
+        }
         var list = all2.slice(0, 80);
         results.innerHTML = list.length
-          ? list.map(historyRow).join('')
-          : '<div class="empty">' + (histSlot ? slotName(histSlot) + 'の' : '') +
-            '記録がありません</div>';
+          ? '<div class="tiny muted" style="margin-bottom:4px">' +
+            (histSlot ? slotName(histSlot) + 'に食べたもの' : 'すべての記録') + '・新しい順</div>' +
+            list.map(historyRow).join('')
+          : '<div class="empty">まだ記録がありません</div>';
       });
     }
 
@@ -547,18 +558,20 @@
         x.classList.toggle('on', x === b);
       });
       slotFilter.hidden = (src !== 'hist');
-      S.Settings.save({ lastAddSrc: src }).then(function () { return A().reloadSettings(); });
       doSearch();
     });
+
+    function markSlotChip() {
+      Array.prototype.forEach.call(slotFilter.querySelectorAll('[data-hslot]'), function (x) {
+        x.classList.toggle('on', x.dataset.hslot === histSlot);
+      });
+    }
 
     slotFilter.addEventListener('click', function (e) {
       var b = e.target.closest('[data-hslot]');
       if (!b) return;
       histSlot = b.dataset.hslot;
-      Array.prototype.forEach.call(slotFilter.querySelectorAll('button'), function (x) {
-        x.classList.toggle('on', x === b);
-      });
-      S.Settings.save({ lastHistSlot: histSlot }).then(function () { return A().reloadSettings(); });
+      markSlotChip();
       doSearch();
     });
 

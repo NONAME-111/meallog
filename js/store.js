@@ -374,6 +374,21 @@
         });
       });
     },
+    // トイレ記録を1件だけ足す。開いている日とは別の日へも書けるようにしてある。
+    // 画面が持っている記録を丸ごと put すると別の日の記録を上書きしてしまうため、
+    // 同一トランザクションで読み直してから足す。
+    addToilet: function (date, item) {
+      if (!item || !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(item.t || ''))) {
+        return Promise.reject(new Error('時刻の形式が正しくありません'));
+      }
+      return run('body', 'readwrite', function (s) {
+        return reqp(s.get(date)).then(function (rec) {
+          rec = rec || blankBody(date);
+          rec.toilet = (rec.toilet || []).concat([{ t: item.t, type: item.type }]);
+          return reqp(s.put(rec)).then(function () { return rec; });
+        });
+      });
+    },
     // 部分更新を同一トランザクションで行い、体重やメモなどを保持する。
     importSteps: function (rows) {
       // 同じ日が複数あっても最後の値1件へまとめる。既存値には加算せず、
@@ -632,8 +647,6 @@
     chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
-    lastAddSrc: 'used',       // 追加シートで最後に見ていた区分
-    lastHistSlot: '',         // 履歴の絞り込み(朝食/昼食/夕食/間食、空なら全部)
     skipBackfilled: 0         // 取り込み済みの日の未記録を「食べなかった」で埋めた版
   };
 

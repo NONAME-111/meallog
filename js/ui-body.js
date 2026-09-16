@@ -209,6 +209,44 @@
       (mins || (!days && !hours) ? mins + '分' : '');
   }
 
+  function currentTime() {
+    var d = new Date();
+    return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  }
+
+  /* 今日以外を開いているときは、ワンタップで今の時刻を書き込まない。
+     昨日を表示したまま押してしまい、昨日の15時として残る取り違えが起きたため、
+     どの日に入るのかを名前で示し、時刻と日付を選び直せるようにする。 */
+  function openToiletTime(state, type) {
+    var today = A().state.today;
+    var here = A().dateLabel(state.date), now = A().dateLabel(today);
+    var body = A().openSheet(type + 'を記録',
+      '<div class="card">' +
+      '<p class="date-warn">いま開いているのは <b>' + A().esc(here) + '</b> です。' +
+      '今日ではないので、入れる日と時刻を確かめてください。</p>' +
+      '<label class="fld"><span>時刻</span><input type="time" id="toiletTime" value="' +
+      currentTime() + '"></label>' +
+      '<button class="btn wide" id="toiletHere">' + A().esc(here) + ' に記録する</button>' +
+      '<button class="btn sub wide" id="toiletToday" style="margin-top:8px">' +
+      A().esc(now) + ' に記録する（いまの時刻）</button>' +
+      '</div>');
+    body.querySelector('#toiletHere').addEventListener('click', function () {
+      var v = body.querySelector('#toiletTime').value;
+      S.Body.addToilet(state.date, { t: v, type: type }).then(function () {
+        A().closeSheet();
+        A().toast(here + ' ' + v + ' に記録しました');
+        A().render();
+      }).catch(function (e) { A().toast(e.message); });
+    });
+    body.querySelector('#toiletToday').addEventListener('click', function () {
+      S.Body.addToilet(today, { t: currentTime(), type: type }).then(function () {
+        A().closeSheet();
+        A().toast('今日の記録にしました');
+        A().setDate(today);
+      }).catch(function (e) { A().toast(e.message); });
+    });
+  }
+
   function memoCard(rec) {
     return '<div class="card"><h3>メモ</h3>' +
       '<textarea id="bMemo" rows="3" placeholder="体調・生理・服薬など">' +
@@ -257,9 +295,10 @@
         return save({ bowel: rec.bowel === bowel ? '' : bowel }, true);
       }
       if (t.hasAttribute('data-toilet')) {
-        var d = new Date();
-        var hh = ('0' + d.getHours()).slice(-2), mm = ('0' + d.getMinutes()).slice(-2);
-        rec.toilet.push({ t: hh + ':' + mm, type: t.getAttribute('data-toilet') });
+        var type = t.getAttribute('data-toilet');
+        // 今日以外を見ているときは、今の時刻をそのまま書かずに確かめる
+        if (state.date !== A().state.today) return openToiletTime(state, type);
+        rec.toilet.push({ t: currentTime(), type: type });
         return save({}, true);
       }
       if (t.hasAttribute('data-delToilet')) {
