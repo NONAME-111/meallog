@@ -607,15 +607,7 @@
         // 実績: 直近に食べたときの記録をそのまま複製する。
         // 一覧を作ったのと同じ topUsed の結果から探す。直近400件だけを見ていたため、
         // しばらく食べていない食品(例: 最後が1年以上前)はタップしても開けなかった
-        usedList().then(function (all) {
-          var hit = all.filter(function (x) { return x.name === id; })[0];
-          if (hit && hit.latest) return hit.latest;
-          // 念のため全記録からも探す(一覧の作成後に件数が変わった場合など)
-          return S.Entries.topUsed(100000).then(function (every) {
-            var h2 = every.filter(function (x) { return x.name === id; })[0];
-            return h2 ? h2.latest : null;
-          });
-        }).then(function (e2) {
+        findUsedEntry(id).then(function (e2) {
           if (!e2) { A().backSheet(); A().toast('この食品の記録を開けませんでした'); return; }
           var pick = fromEntry(e2);
           pick.defaultAmount = parseFloat(row.dataset.amt) || pick.defaultAmount;
@@ -925,9 +917,9 @@
       }
       if (kind === 'common') {
         F.commonById(id).then(function (it) {
-          if (!it) return;
+          if (!it) { A().toast('この食材を開けませんでした'); return; }
           F.byId(it.id).then(function (f) {
-            if (!f) return;
+            if (!f) { A().toast('この食材を開けませんでした'); return; }
             var pick = fromSeibun(f);
             pick.name = it.label; pick.defaultAmount = it.g;
             pick.note = it.unitLabel ? (it.unitLabel + ' ' + it.g + 'g') : f.n;
@@ -935,11 +927,14 @@
           });
         });
       } else if (kind === 'seibun') {
-        F.byId(id).then(function (f) { if (f) toAmount(fromSeibun(f)); });
+        F.byId(id).then(function (f) {
+          if (!f) { A().toast('この食材を開けませんでした'); return; }
+          toAmount(fromSeibun(f));
+        });
       } else {
-        S.Entries.recent(400).then(function (rows) {
-          var e2 = rows.filter(function (x) { return x.name === id; })[0];
-          if (!e2) return;
+        // 直近400件からしか探しておらず、しばらく食べていない食品が無反応だった
+        findUsedEntry(id).then(function (e2) {
+          if (!e2) { A().toast('この食品の記録を開けませんでした'); return; }
           var pick = fromEntry(e2);
           pick.defaultAmount = parseFloat(row.dataset.amt) || pick.defaultAmount;
           toAmount(pick);
@@ -949,6 +944,17 @@
 
     show();
     setTimeout(function () { q.focus(); }, 60);
+  }
+
+  /* 「よく使う」の行から、複製元の記録を探す。
+     一覧は全記録から数えた topUsed で作っているので、
+     直近◯件だけを見ると、しばらく食べていない食品が開けなくなる。
+     実際に「大根おろし(最後2025-05-05)」が無反応になっていた。 */
+  function findUsedEntry(name) {
+    return S.Entries.topUsed(100000).then(function (all) {
+      var hit = all.filter(function (x) { return x.name === name; })[0];
+      return (hit && hit.latest) || null;
+    });
   }
 
   /* ---- 選択された食品を共通形式へ ---- */

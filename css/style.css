@@ -184,14 +184,20 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .score-num small{font-size:15px;font-weight:600;color:var(--tx2)}
 .nut-row{display:flex;align-items:center;gap:9px;padding:7px 0}
 .nut-name{width:96px;font-size:12px;flex:none}
-.nut-bar{flex:1;height:12px;background:#fff;border:1px solid #d3d9df;border-radius:99px;overflow:hidden;position:relative}
+/* 基準値の縦線をバーの上下へはみ出させたいので overflow は切らない。
+   中の塗りと帯は自前で角を丸めているため、はみ出しても崩れない */
+.nut-bar{flex:1;height:12px;background:#fff;border:1px solid #d3d9df;border-radius:99px;
+  overflow:visible;position:relative}
 .nut-bar > i{display:block;height:100%;border-radius:99px}
-.nut-bar > u.nut-target-line{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--tx);
-  opacity:.9;z-index:3;text-decoration:none;box-shadow:0 0 0 1px rgba(255,255,255,.45)}
+/* 基準値。バーの上下へはっきりはみ出させて、目線が止まるようにする */
+.nut-bar > u.nut-target-line{position:absolute;top:-5px;bottom:-5px;width:3px;
+  margin-left:-1px;background:var(--tx);border-radius:2px;
+  opacity:1;z-index:3;text-decoration:none;
+  box-shadow:0 0 0 1.5px var(--card)}
 /* 適正ゾーン。ここに入っていればよい、を目標値の文字なしで伝える。
    バーの地(白)とはっきり差が出る色にすること。--green-l はカード用で薄すぎた(1.01:1) */
 .nut-bar > u.nut-zone{position:absolute;top:0;bottom:0;z-index:0;
-  background:var(--zone);text-decoration:none}
+  background:var(--zone);border-radius:99px;text-decoration:none}
 .nut-bar > i{position:relative;z-index:1}
 .nut-val{width:76px;text-align:right;font-size:11px;color:var(--tx2);flex:none}
 .ok{background:var(--judge-ok)} .low{background:var(--judge-warn)}
