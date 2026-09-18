@@ -1095,13 +1095,23 @@
     var lacksPfc = !hasPfc(pick.per);
     var hasEstimate = !!(pick.est && pick.est.keys && pick.est.keys.length);
     var quick = isG ? [30, 50, 80, 100, 150, 200, 250] : [0.5, 1, 1.5, 2, 3];
+    /* 数量はドラムで選ぶ(drum.js)。個数は20まで、重さは999.9gまで。
+       範囲を超える古い記録を開いたときは、黙って丸めずに元の値を知らせる */
+    var limit = isG ? 999.9 : 20;
+    var asked = parseFloat(pick.defaultAmount);
+    if (!isFinite(asked) || asked < 0) asked = isG ? 100 : 1;
+    var startAmount = Math.min(asked, limit);
+    var overNote = asked > limit
+      ? '<div class="amount-over">' + (isG ? '重さは999.9gまで' : '個数は20まで') +
+        'です（元の値 ' + asked + (isG ? 'g' : A().esc(pick.unit)) + '）。' +
+        'それより多いときは2回に分けて記録してください</div>'
+      : '';
     var html = '' +
       '<div class="card"><b>' + A().esc(pick.name) + '</b>' +
       (pick.note ? '<div class="tiny muted">' + A().esc(pick.note) + '</div>' : '') + '</div>' +
       '<div class="card">' +
-        '<label class="fld"><span>' + (isG ? '重さ (g)' : '個数 (' + A().esc(pick.unit) + ')') + '</span>' +
-        '<input type="number" id="amt" inputmode="decimal" step="' + (isG ? '1' : '0.1') + '" value="' +
-        pick.defaultAmount + '"></label>' +
+        '<div class="fld amount-fld"><span>' + (isG ? '重さ (g)' : '個数 (' + A().esc(pick.unit) + ')') +
+        '</span><div id="amtDrum"></div>' + overNote + '</div>' +
         '<div id="chips">' + quick.map(function (v) {
           return '<button class="chip" data-q="' + v + '">' + v + (isG ? 'g' : '') + '</button>';
         }).join('') + '</div>' +
@@ -1127,11 +1137,17 @@
 
     var body = A().openSheet(
       onPick ? 'セットに入れる分量' : (existingId ? '記録を編集' : slotName(slot) + 'に追加'), html);
-    var amt = body.querySelector('#amt');
     var prev = body.querySelector('#preview');
+    var amount = startAmount;
+    var drum = global.Drum.create(body.querySelector('#amtDrum'), {
+      kind: isG ? 'gram' : 'count', unit: isG ? 'g' : pick.unit, value: startAmount,
+      // 作成中にも1回呼ばれる。そのときは drum がまだ無いので描かない(最後の draw() で描く)
+      onChange: function (v) { amount = v; if (drum) draw(); }
+    });
+    amount = drum.value();
 
     function calc() {
-      var a = parseFloat(amt.value);
+      var a = amount;
       if (!isFinite(a) || a < 0) a = 0;
       var out = {};
       var r = isG ? (a / 100) : a;
@@ -1147,19 +1163,18 @@
       var n = c.n;
       prev.innerHTML = '<div class="row between"><b style="font-size:22px">' +
         Math.round(n.kcal || 0) + ' kcal</b><span class="small muted">' +
-        (isG ? Math.round(c.amount) + ' g' : c.amount + ' ' + A().esc(pick.unit)) + '</span></div>' +
+        drum.text() + ' ' + (isG ? 'g' : A().esc(pick.unit)) + '</span></div>' +
         '<div class="small muted" style="margin-top:6px">たんぱく質 ' + N.fmt(n.protein || 0) +
         'g ・ 脂質 ' + N.fmt(n.fat || 0) + 'g ・ 炭水化物 ' + N.fmt(n.carb || 0) +
         'g ・ 食塩 ' + N.fmt(n.salt || 0) + 'g' +
         (pick.est && pick.est.keys && pick.est.keys.length ? '（推定を含む）' : '') + '</div>';
     }
 
-    amt.addEventListener('input', draw);
+    // よく使う量はボタン1つで。ドラムもその値まで回る
     body.querySelector('#chips').addEventListener('click', function (e) {
       var b = e.target.closest('[data-q]');
       if (!b) return;
-      amt.value = b.dataset.q;
-      draw();
+      drum.set(parseFloat(b.dataset.q));
     });
     var fill = body.querySelector('#fillNut');
     fill.addEventListener('click', function () {
@@ -1179,7 +1194,7 @@
     var saveBtn = body.querySelector('#save');
     saveBtn.addEventListener('click', function () {
       var c = calc();
-      if (!c.amount) { A().toast('数量を入力してください'); return; }
+      if (!c.amount) { A().toast('数量を選んでください（0のままです）'); return; }
       saveBtn.disabled = true;
       var oldText = saveBtn.textContent;
       saveBtn.textContent = '栄養素を確認中…';

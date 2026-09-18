@@ -275,6 +275,38 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
     var(--zone) 0 2px, transparent 2px 5px);
   border-color:var(--zone-edge)}
 .source-legend i.lg-line{width:3px;border:0;background:var(--tx);border-radius:1px}
+/* ---- 数量のドラム(drum.js) ----
+   1段36px×5段。中央の帯に止まった段が選ばれた値。上下はぼかして「回る」ことを示す。
+   段の高さを変えるときは drum.js の ROW も同じ値にすること。
+   ぼかしは mask-image を使わず、カード色のグラデーションを上下に重ねる。
+   iOS Safari はスクロールする要素の親に mask を掛けると、慣性スクロール中の描き直しが乱れることがある */
+.amount-fld > span{margin-bottom:2px}
+.drum{display:block;margin:2px 0 6px}
+.drum-wheel{position:relative;display:flex;justify-content:center;align-items:stretch;gap:2px;
+  height:180px}
+.drum-wheel::before,.drum-wheel::after{content:"";position:absolute;left:0;right:0;height:62px;
+  z-index:2;pointer-events:none}
+.drum-wheel::before{top:0;background:linear-gradient(to bottom,var(--card) 8%,rgba(0,0,0,0))}
+.drum-wheel::after{bottom:0;background:linear-gradient(to top,var(--card) 8%,rgba(0,0,0,0))}
+.drum-col{position:relative;z-index:1;width:44px;height:100%;overflow-y:scroll;
+  scroll-snap-type:y mandatory;overscroll-behavior:contain;scrollbar-width:none;
+  border-radius:10px;outline:none;touch-action:pan-y}
+.drum-col::-webkit-scrollbar{display:none}
+.drum-col.wide{width:58px}
+.drum-col:focus-visible{box-shadow:inset 0 0 0 2px var(--accent-text)}
+.drum-pad{height:72px}
+.drum-item{height:36px;line-height:36px;text-align:center;scroll-snap-align:center;cursor:pointer;
+  font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--tx3)}
+.drum-item.on{color:var(--tx);font-weight:800}
+/* 重さの頭の0(0150 の 0)は薄くして、150 と読めるようにする */
+.drum-col.lead .drum-item.on{color:var(--tx3);font-weight:600}
+.drum-sep,.drum-unit{position:relative;z-index:1;align-self:center;color:var(--tx)}
+.drum-sep{width:10px;text-align:center;font-size:24px;font-weight:800}
+.drum-unit{margin-left:6px;font-size:15px;font-weight:700;color:var(--tx2)}
+.drum-band{position:absolute;left:0;right:0;top:72px;height:36px;z-index:0;pointer-events:none;
+  border-radius:10px;background:rgba(127,140,155,.16);box-shadow:inset 0 0 0 1px var(--line)}
+.amount-over{margin-top:4px;font-size:12px;font-weight:700;color:var(--warning-text)}
+
 /* 「今日ではない日を開いています」の注意。読み飛ばされては困るので枠で囲む */
 .date-warn{margin:0 0 10px;padding:8px 10px;border-radius:8px;font-size:13px;line-height:1.5;
   color:var(--warning-text);background:rgba(215,130,20,.10);

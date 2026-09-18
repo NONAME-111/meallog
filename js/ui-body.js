@@ -33,7 +33,9 @@
   }
 
   /* ---- 体重・体脂肪 ---- */
-  function weightCard(rec, st, tg, history) {
+  /* 体重に連動する2行(BMI・前回比・目標まで／基礎代謝・目標摂取)。
+     体重を変えたときは画面ごと描き直さず、この2行だけを差し替える(bind の #bWeight を参照) */
+  function weightInfo(rec, st, history) {
     var h = st.heightCm || 0;
     var bmi = (rec.weight && h) ? (rec.weight / Math.pow(h / 100, 2)) : null;
     var prev = null;
@@ -42,6 +44,19 @@
     }
     var diff = (prev && rec.weight) ? (rec.weight - prev.weight) : null;
     var toGoal = (st.goalWeight && rec.weight) ? (rec.weight - st.goalWeight) : null;
+    // 身長は設定済みで体重が空のときに「身長の設定後に」と出ていたので、足りないほうを案内する
+    return (bmi ? 'BMI ' + N.fmt(bmi) + '（' + bmiLabel(bmi) + '）'
+      : (h ? 'BMIは体重を入れると表示されます' : 'BMIは身長の設定後に表示されます')) +
+      (diff != null ? ' ／ 前回比 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg' : '') +
+      (toGoal != null ? ' ／ 目標まで ' + N.fmt(Math.max(0, toGoal)) + ' kg' : '');
+  }
+
+  function targetInfo(tg) {
+    return '推定基礎代謝 ' + tg._bmr + ' kcal ／ 消費目安 ' + tg._tdee +
+      ' kcal ／ 目標摂取 ' + tg.kcal.goal + ' kcal';
+  }
+
+  function weightCard(rec, st, tg, history) {
     var hasAnySteps = history.some(function (x) {
       return typeof x.steps === 'number' && isFinite(x.steps);
     });
@@ -49,12 +64,12 @@
     return '<div class="card"><h3>体重・体脂肪</h3>' +
       '<div class="grid2">' +
         '<label class="fld"><span>体重 (kg)</span><input type="number" inputmode="decimal" step="0.1" ' +
-          'id="bWeight" value="' + (rec.weight == null ? '' : rec.weight) + '"></label>' +
+          'enterkeyhint="next" id="bWeight" value="' + (rec.weight == null ? '' : rec.weight) + '"></label>' +
         '<label class="fld"><span>体脂肪率 (%)</span><input type="number" inputmode="decimal" step="0.1" ' +
-          'id="bFat" value="' + (rec.bodyFat == null ? '' : rec.bodyFat) + '"></label>' +
+          'enterkeyhint="next" id="bFat" value="' + (rec.bodyFat == null ? '' : rec.bodyFat) + '"></label>' +
       '</div>' +
       '<label class="fld"><span>歩数</span><input type="number" inputmode="numeric" ' +
-        'id="bSteps" value="' + (rec.steps == null ? '' : rec.steps) + '"></label>' +
+        'enterkeyhint="done" id="bSteps" value="' + (rec.steps == null ? '' : rec.steps) + '"></label>' +
       (rec.activeKcal != null
         ? '<div class="tiny muted" style="margin:-4px 2px 8px">ヘルスケアの活動エネルギー（実測）' +
           N.fmt(rec.activeKcal) + ' kcal。採点ではこの実測値を使います</div>'
@@ -62,13 +77,8 @@
       '<button class="btn sub sm" data-stepimport="1">ヘルスケアから取り込む</button>' +
       '<div class="step-import-help">ヘルスケアから書き出したZIPを選び、歩数と活動エネルギーを複数日分まとめて取り込みます。</div>' +
       (!hasAnySteps ? '<div class="step-first">まだ歩数を取り込んでいません。ボタンを押して、ヘルスケアの一括書き出し手順を確認してください。</div>' : '') +
-      '<div class="small muted">' +
-        (bmi ? 'BMI ' + N.fmt(bmi) + '（' + bmiLabel(bmi) + '）' : 'BMIは身長の設定後に表示されます') +
-        (diff != null ? ' ／ 前回比 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg' : '') +
-        (toGoal != null ? ' ／ 目標まで ' + N.fmt(Math.max(0, toGoal)) + ' kg' : '') +
-      '</div>' +
-      '<div class="tiny muted" style="margin-top:6px">推定基礎代謝 ' + tg._bmr +
-        ' kcal ／ 消費目安 ' + tg._tdee + ' kcal ／ 目標摂取 ' + tg.kcal.goal + ' kcal</div>' +
+      '<div class="small muted" id="bInfo">' + weightInfo(rec, st, history) + '</div>' +
+      '<div class="tiny muted" id="bTarget" style="margin-top:6px">' + targetInfo(tg) + '</div>' +
       '</div>';
   }
 
@@ -265,9 +275,29 @@
     }
 
     var w = view.querySelector('#bWeight'), f = view.querySelector('#bFat');
+    /* 体重は画面ごと描き直さない。キーボードの「次」で体脂肪へ移ると体重欄の change が走るが、
+       ここで描き直すと移った先の体脂肪欄まで作り直され、フォーカスが外れてキーボードが閉じる。
+       体重に連動する2行だけを差し替える */
     w.addEventListener('change', function () {
       var v = parseFloat(w.value);
-      save({ weight: isFinite(v) ? v : null }, true);
+      save({ weight: isFinite(v) ? v : null }, false).then(function () {
+        var info = view.querySelector('#bInfo');
+        if (info) info.innerHTML = weightInfo(rec, st, history);
+        return A().targetsFor(state.date);
+      }).then(function (r) {
+        var tgEl = view.querySelector('#bTarget');
+        if (tgEl && r && r.tg) tgEl.innerHTML = targetInfo(r.tg);
+      });
+    });
+    // 改行キーが「次へ」になるキーボードでは、そのキーでも次の欄へ進める
+    [['#bWeight', '#bFat'], ['#bFat', '#bSteps']].forEach(function (pair) {
+      var from = view.querySelector(pair[0]), to = view.querySelector(pair[1]);
+      if (!from || !to) return;
+      from.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || e.isComposing) return;
+        e.preventDefault();
+        to.focus();
+      });
     });
     f.addEventListener('change', function () {
       var v = parseFloat(f.value);
