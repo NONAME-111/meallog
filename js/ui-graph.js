@@ -13,6 +13,9 @@
   function A() { return global.App; }
 
   function render(view, state) {
+    // 前回見ていた期間から始める(設定に残してあるので、アプリを開き直しても同じ)
+    var saved = (A().state.settings || {}).graphRange;
+    if (saved && RANGES.some(function (x) { return x.key === saved; })) range = saved;
     var to = state.date;
     var from = S.shiftYmd(to, -(range - 1));
     return Promise.all([
@@ -68,6 +71,7 @@
         var b = e.target.closest('[data-r]');
         if (!b) return;
         range = parseInt(b.dataset.r, 10);
+        S.Settings.save({ graphRange: range }).then(function () { return A().reloadSettings(); });
         A().render();
       });
 

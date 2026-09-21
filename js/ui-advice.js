@@ -13,7 +13,14 @@
   var sourceFoodById = {};
   var sourceSweetRules = [];
   var SOURCE_TYPES = ['normal', 'sweets', 'alcohol', 'supplement'];
-  var ALCOHOL_NAME = /酒|ビール|ワイン|焼酎|日本酒|ハイボール|ウイスキー|ウィスキー|ブランデー|チューハイ|サワー|梅酒|カクテル|ホッピー|発泡酒|シャンパン|モルツ|エール|ストロング|スーパードライ|贅沢搾り|ほろよい|氷結|檸檬堂|金麦|淡麗|本麒麟|クリアアサヒ/i;
+  /* 「お酒」は飲むお酒だけ。名前だけで見ていたため、実際の記録で
+     料理酒(133回。成分表17138は調味料類で食塩2.2g/100g)が お酒 に数えられ、
+     飲んでいない日でも食塩のバーにお酒の色が出ていた。
+     ほかに「スリムアップスリム ストロング・ファイバー(502回)」「ストロング 豪快のり(湖池屋)」も
+     「ストロング」だけで お酒 になっていた。
+     成分表の食品番号が分かるものは、名前ではなく食品群(16=アルコール飲料類)で判断する。 */
+  var ALCOHOL_NAME = /酒|ビール|ワイン|焼酎|日本酒|ハイボール|ウイスキー|ウィスキー|ブランデー|チューハイ|サワー|梅酒|カクテル|ホッピー|発泡酒|シャンパン|モルツ|エール|ストロングゼロ|スーパードライ|贅沢搾り|ほろよい|氷結|檸檬堂|金麦|淡麗|本麒麟|クリアアサヒ/i;
+  var ALCOHOL_NOT = /料理酒|料理の酒|みりん|味醂|酒粕|酒かす|粕漬|酒蒸|甘酒|ノンアルコール|ノンアル|アルコールゼロ|サワークリーム|サワーオニオン|サワーソース|ジンジャーエール|フルーツカクテル|カクテルゼリー|居酒屋/i;
 
   /* 配点は Nutrition.WEIGHTS と同じで、合計はちょうど100点 */
   var GROUPS = [
@@ -217,8 +224,10 @@
         avgEstimated.exercise = 0;
         var sc = N.score(avg, tg, { coverage: avgCoverage, estimated: avgEstimated });
         var cmts = N.comments(sc, tg, { hasEntries: true });
-        var note = days + '日のうち ' + tracked.length + ' 日分の平均です' +
-          (tracked.length < days ? '（記録のない ' + (days - tracked.length) + ' 日は除いています）' : '');
+        // 「30日のうち30日分の平均です」は当たり前なので、欠けた日があるときだけ出す
+        var note = tracked.length < days
+          ? '記録のない ' + (days - tracked.length) + ' 日を除いた ' + tracked.length + ' 日分の平均です'
+          : '';
         var sources = averageSourceBreakdown(tracked);
         view.innerHTML = segHtml() + scoreCard(sc, true, [], note) + commentCard(cmts) +
           dailyScoreCard(daysData, tg) + groupedCard(sc, avg, tg, avgCoverage, avgEstimated, rangeActivity, sources);
@@ -229,9 +238,12 @@
   function entrySourceType(entry) {
     var name = String((entry && entry.name) || '');
     if (global.Estimate && global.Estimate.isSupplement(name)) return 'supplement';
-    if (ALCOHOL_NAME.test(name)) return 'alcohol';
     var ref = entry && entry.ref;
     var food = ref && sourceFoodById[ref.id];
+    // 成分表で分かるものは食品群で判断する(16=アルコール飲料類、15=菓子類)。
+    // 料理酒は調味料類(17)なので、ここで お酒 にはならない
+    if (food && String(food.g) === '16') return 'alcohol';
+    if (!food && ALCOHOL_NAME.test(name) && !ALCOHOL_NOT.test(name)) return 'alcohol';
     if (food && String(food.g) === '15') return 'sweets';
     var product = F.productFor(name);
     if (product && /成分表\s*15\d{3}/.test(product.src || '')) return 'sweets';
@@ -331,26 +343,28 @@
       (sc.hasEstimated ? '<div class="tiny muted">この点数には食品成分表からの推定値を含みます。</div>' : '') +
       (note ? '<div class="tiny muted">' + A().esc(note) + '</div>' : '') +
       (missing.length && hasEntries ? '<div class="tiny muted">' + missing.map(jpSlot).join('・') +
-        'が未記録です。食べなかった場合は記録タブで「食べなかった」を押すと採点の精度が上がります。</div>' : '') + '</div>';
+        'が未記録です（食べなかった日は記録タブの「食べなかった」で精度が上がります）。</div>' : '') + '</div>';
   }
 
   function jpSlot(key) { return { breakfast: '朝食', lunch: '昼食', dinner: '夕食' }[key] || key; }
   function ring(t, color) {
-    var r = 34, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(100, t)) / 100);
-    return '<svg width="84" height="84" viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="' + r +
-      '" fill="none" stroke="var(--line)" stroke-width="8"/><circle cx="42" cy="42" r="' + r +
-      '" fill="none" stroke="' + color + '" stroke-width="8" stroke-linecap="round" stroke-dasharray="' +
-      c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 42 42)"/></svg>';
+    var r = 27, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(100, t)) / 100);
+    return '<svg width="68" height="68" viewBox="0 0 68 68" aria-hidden="true"><circle cx="34" cy="34" r="' + r +
+      '" fill="none" stroke="var(--line)" stroke-width="7"/><circle cx="34" cy="34" r="' + r +
+      '" fill="none" stroke="' + color + '" stroke-width="7" stroke-linecap="round" stroke-dasharray="' +
+      c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '" transform="rotate(-90 34 34)"/></svg>';
   }
 
+  /* 取り込んだ日にだけ出る。本文が長い(実測403px)ので、点数だけ見出しに出してたたんでおく */
   function importedCard(imp) {
     if (!imp) return '';
     var src = imp.source || '取り込みデータ';
-    return '<div class="card"><h3>' + A().esc(src) + 'の記録</h3>' +
-      (imp.score != null ? '<div class="row between"><span class="small">当時の健康度</span><b>' + imp.score + ' 点</b></div>' : '') +
+    return '<details class="card imported-card"><summary>' +
+      '<span>' + A().esc(src) + 'の記録</span>' +
+      (imp.score != null ? '<b>当時の健康度 ' + imp.score + ' 点</b>' : '') + '</summary>' +
       (imp.advice ? '<div class="small" style="margin-top:8px;color:var(--tx2)">' + A().esc(imp.advice) + '</div>' : '') +
       '<div class="tiny muted" style="margin-top:8px">この日の栄養素は、記録した食品にカロリーしか無いため' +
-      A().esc(src) + 'の日次集計で補っています。</div></div>';
+      A().esc(src) + 'の日次集計で補っています。</div></details>';
   }
 
   function commentCard(comments) {
@@ -398,15 +412,17 @@
       h += '</div>';
       h += '</section>';
     });
-    return h + '<div class="tiny muted score-source">' +
-      '<b>配点（合計100点）</b>：カロリー30・PFCバランス24・ビタミン/ミネラル24・塩分と脂質の質12・運動10。' +
-      '体重の増減を決めるのは収支なのでカロリーを最大にし、減量中に筋肉量を左右するたんぱく質を次に置いています。' +
+    // 配点は各区分の見出し(◎良好 21.0 / 24点)に出ているので、ここでは繰り返さない。
+    // 残りは普段読まないので折りたたんでおく(画面を短くするため)
+    return h + '<details class="score-source"><summary>採点の決め方と出典</summary>' +
+      '<div class="tiny muted">' +
       'カロリーは目標の5%超過から減点が始まり、30%超で0点です（不足は15%まで許容）。' +
-      'さらに、超過が1割を超えた日は総合点にも上限をかけます（25%超で70点、40%超で40点）。<br>' +
-      '「栄養データ○%」は、その日食べたもののうち、その栄養素の値が分かっている割合です。' +
-      '低いときは実際にはもっと摂れている可能性があります。' +
-      '「うち推定○%」は、食品成分表から補った割合です。<br>' +
-      '目標値は「日本人の食事摂取基準(2025年版)」の18〜64歳の推奨量・目安量・目標量が基準です。</div></div>';
+      '超過が1割を超えた日は総合点にも上限をかけます（25%超で70点、40%超で40点）。' +
+      '体重の増減を決めるのは収支なので、カロリーの配点を最大にしています。<br>' +
+      '「栄養データ○%」はその栄養素の値が分かっている割合で、9割を切ったときだけ出します。' +
+      '「うち推定○%」は食品成分表から補った割合です。<br>' +
+      '目標値は「日本人の食事摂取基準(2025年版)」の18〜64歳の推奨量・目安量・目標量が基準です。' +
+      '</div></details></div>';
   }
 
   function sourceLegend() {
@@ -548,9 +564,21 @@
     } else {
       h += '<span class="nut-bar"></span>';
     }
+    /* 注記(2行目)を出すかどうか。適正で注記も無い行は1行で済ませ、画面を短くする。
+       そのぶん判定は量の右に記号(◎)で出す。色だけに頼らないので、記号は必ず付ける */
+    var lowData = (key !== 'exercise' && cov < 0.9);
+    var mostlyEstimated = est >= 0.5;   // 半分以上が推定のときだけ知らせる(全行に出ると邪魔)
+    var isExercise = (key === 'exercise' && activity && activity.hasData);
+    var flat = (cls === 'ok') && !lowData && !mostlyEstimated && !isExercise &&
+      !(detail && detail.excluded);
     h += '<span class="nut-val"><b>' + (est > 0 ? '約' : '') +
       (known ? N.fmt(value) : '—') + '</b><i>' + A().esc(meta[1]) + '</i>' +
+      (flat && judge
+        ? '<i class="judge-mark inline ' + cls + '" title="' + A().esc(judgeFull) +
+          '" aria-label="' + A().esc(judgeFull) + '">' + JUDGE_MARK[cls] + '</i>'
+        : '') +
       (clickable ? '<em>›</em>' : '') + '</span>';
+    if (flat) return h + '</' + tag + '>';
     // 2行目: 判定と、例外があればその注記。判定を1行目から外したぶんバーが広くなる
     var notes = judge
       ? '<span class="judge-tag ' + cls + '" aria-label="' + A().esc(judgeFull) +
@@ -558,8 +586,8 @@
       : '';
     if (detail && detail.excluded) notes += '<span>採点対象外</span>';
     // カバー率は9割を切ったときだけ。ふだん出すと何のことか分からず邪魔になる
-    if (key !== 'exercise' && cov < 0.9) notes += '<span>栄養データ ' + Math.round(cov * 100) + '%</span>';
-    if (est > 0) notes += '<span>うち推定 ' + Math.round(est * 100) + '%</span>';
+    if (lowData) notes += '<span>栄養データ ' + Math.round(cov * 100) + '%</span>';
+    if (mostlyEstimated) notes += '<span>うち推定 ' + Math.round(est * 100) + '%</span>';
     if (key === 'exercise' && activity && activity.hasData) {
       notes += '<span>運動記録 ' + N.fmt(activity.exerciseKcal) + ' kcal ＋ ' +
         (activity.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数由来 ') +

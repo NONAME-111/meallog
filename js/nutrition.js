@@ -199,7 +199,8 @@
               : '次の食事か翌日で調整しましょう。') };
       } else if (diff < -0.15) {
         kcalNote = { pin: true, sev: -diff * 3, icon: '⚠️',
-          text: '摂取カロリーが目標より大きく少ないです（' + Math.round(e.intake) + ' / ' + e.goal +
+          text: '摂取カロリーが目標より ' + Math.round(e.goal - e.intake) + ' kcal 少ないです（' +
+            Math.round(e.intake) + ' / ' + e.goal +
             ' kcal）。記録漏れが無いか確認してください。極端な不足は筋肉量の低下を招きます。' };
       } else {
         kcalNote = { pin: false, sev: -1, icon: '✅',
@@ -217,9 +218,9 @@
       cand.push({
         sev: (1 - x.ratio) * (x.key === 'protein' ? 2.2 : x.key === 'fiber' ? 1.4 : 1),
         icon: x.key === 'protein' ? '🍖' : '🥬',
-        text: (x.estimated > 0 ? '推定を含む目安では、' : '') + m[0] +
+        text: (x.estimated > 0 ? '推定値を含めた概算では、' : '') + m[0] +
           (x.estimated > 0 ? 'が不足している可能性があります（' : 'が不足しています（') +
-          fmt(x.intake) + ' / ' + fmt(x.goal) + ' ' + m[1] + '、達成率' +
+          fmt(x.intake) + ' / ' + fmt(x.goal) + ' ' + m[1] + '、達成率 ' +
           Math.round(x.ratio * 100) + '%）。' + suggestText(x.key)
       });
     });
@@ -234,8 +235,8 @@
       cand.push({
         sev: (x.intake / lim - 1) * (x.key === 'salt' || x.key === 'satfat' ? 1.6 : 1.2),
         icon: x.key === 'vita' ? '⚠️' : '🧂',
-        text: (x.estimated > 0 ? '推定を含む目安では、' : '') + m[0] +
-          (x.estimated > 0 ? 'が目安を超えている可能性があります（' : 'が目安を超えています（') +
+        text: (x.estimated > 0 ? '推定値を含めた概算では、' : '') + m[0] +
+          (x.estimated > 0 ? 'が上限を超えている可能性があります（' : 'が上限を超えています（') +
           fmt(x.intake) + ' / ' + fmt(lim) + ' ' + m[1] + '）。' + overText(x.key)
       });
     });
@@ -244,8 +245,8 @@
     var exercise = byKey.exercise;
     if (exercise && !exercise.excluded && exercise.ratio < 1) {
       cand.push({ sev: (1 - exercise.ratio) * 0.6, icon: '🏃',
-        text: '運動は ' + Math.round(exercise.intake) + ' / ' + Math.round(exercise.goal) +
-          ' kcal相当です。歩数や短い運動を少し足すと目標に近づきます。' });
+        text: '運動で消費したのは ' + Math.round(exercise.intake) + ' kcal です（目標 ' +
+          Math.round(exercise.goal) + ' kcal）。歩数や短い運動を足すと目標に近づきます。' });
     }
 
     cand.sort(function (a, b) { return b.sev - a.sev; });

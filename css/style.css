@@ -101,6 +101,25 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 /* ---- サマリ(記録タブ上部) ---- */
 .summary{background:linear-gradient(135deg,var(--green),var(--green-d));color:#fff;
   border:1px solid transparent;border-radius:var(--r);padding:14px;margin-bottom:10px}
+/* カロリーとバーは、下へスクロールしても画面上部に残す(日付の下)。
+   横は #view の内側余白ぶん広げて、後ろのカードが脇から覗かないようにする */
+.summary-pin{position:sticky;top:calc(var(--hdr) + env(safe-area-inset-top));z-index:20;
+  margin:0 -12px;padding:0 12px;background:var(--bg)}
+.summary-top{padding:8px 12px 9px;margin-bottom:7px}
+.summary-top .sum-main{align-items:flex-end}
+.summary-top .sum-kcal{font-size:30px}
+/* 残りカロリーはバーの上。左に数字、右に採点への入口 */
+.sum-rest{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin-top:3px;font-size:12.5px;line-height:1.25;white-space:nowrap}
+.sum-rest b{font-size:15px;font-weight:800}
+.sum-rest .sum-action{margin-top:0;flex:none}
+.summary-top .summary-source-panel{margin-top:5px;padding:4px 8px}
+.summary-top .summary-source-panel .bar{margin:0}
+.summary-sub{padding:10px 12px 12px}
+/* 凡例は緑地の上に出るので、白で固定する(緑地に白は5.4:1)。
+   .source-legend の既定色(var(--tx2))のままだと、ライト表示で濃い灰色が緑に乗って読めない */
+.summary-sub .source-legend{color:#fff;font-weight:700}
+.summary-sub .source-legend i{border-color:rgba(255,255,255,.75)}
 .summary-link{display:block;width:100%;text-align:left;cursor:pointer}
 .summary-link:focus-visible{outline:3px solid color-mix(in srgb,var(--green) 45%,white);outline-offset:2px}
 .sum-meta{text-align:right}
@@ -131,12 +150,17 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .summary-source-panel .source-legend span{font-size:12px}
 .summary-source-panel .source-legend i{width:13px;height:13px;
   border:1.5px solid rgba(12,18,24,.62);box-shadow:0 0 0 1px rgba(255,255,255,.75)}
-.pfc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
-.pfc div{background:#fff;color:#20242a;border:2px solid rgba(15,50,36,.28);
-  border-radius:8px;padding:8px 6px 7px;text-align:center}
-.pfc b{display:block;font-size:21px;line-height:1.2}
-.pfc b .of{display:inline;font-size:10px;font-weight:700;color:#5a636d;margin-left:1px;letter-spacing:-.01em}
-.pfc span{display:block;margin-top:1px;font-size:11px;line-height:1.3;color:#4f5964}
+.pfc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.pfc .pfc-cell{position:relative;overflow:hidden;background:#fff;color:#20242a;
+  border:2px solid rgba(15,50,36,.28);border-radius:8px;padding:4px 6px 3px;text-align:center}
+/* 枠を縦のバーに見立て、下から色がせり上がる量でも摂取量が分かるようにする */
+.pfc .pfc-cell::before{content:"";position:absolute;left:0;right:0;bottom:0;height:var(--fill,0%);
+  background:#b3e3cb;z-index:0}
+.pfc .pfc-cell.over::before{background:#ffd8a8}
+.pfc .pfc-cell > *{position:relative;z-index:1}
+.pfc b{display:block;font-size:20px;line-height:1.15}
+.pfc b .of{display:inline;font-size:10px;font-weight:700;color:#4a545e;margin-left:1px;letter-spacing:-.01em}
+.pfc span{display:block;margin-top:0;font-size:10.5px;line-height:1.25;color:#3d4650}
 /* カロリーしか登録が無い食品が混ざっていて、PFCに反映できないときの注記 */
 .sum-note{margin-top:9px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.16);
   font-size:11px;line-height:1.5}
@@ -144,6 +168,14 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 /* 履歴の絞り込み(朝食/昼食/夕食/間食) */
 .chips-row{display:flex;flex-wrap:wrap;margin-bottom:2px}
 .chips-row[hidden]{display:none}
+
+/* 取り込み元(あすけん)の記録。たたんだ状態では見出しだけ */
+.imported-card > summary{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-size:14px;font-weight:700;cursor:pointer;list-style:revert}
+.imported-card > summary b{font-size:13px;white-space:nowrap}
+.imported-card > summary::after{content:"▾";margin-left:2px;color:var(--tx3);font-size:12px}
+.imported-card[open] > summary::after{content:"▴"}
+.imported-card > summary::-webkit-details-marker{display:none}
 
 /* 採点タブ: 期間中の日ごとの点数 */
 .daybars{display:flex;align-items:flex-end;gap:2px;height:96px;margin-top:4px}
@@ -210,12 +242,12 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .nut-val{width:76px;text-align:right;font-size:11px;color:var(--tx2);flex:none}
 .ok{background:var(--judge-ok)} .low{background:var(--judge-warn)}
 .high{background:var(--judge-warn)} .bad{background:var(--judge-bad)}
-.advice-li{display:flex;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.advice-li{display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:12.5px;line-height:1.45}
 .advice-li:first-child{border-top:0}
 
 /* ---- v11 採点の5区分 ---- */
 .score-groups > .row h3{margin:0}
-.score-group{border-top:1px solid var(--line);padding:8px 0 6px}
+.score-group{border-top:1px solid var(--line);padding:5px 0 3px}
 .score-group:first-of-type{margin-top:6px}
 .score-group-head{width:100%;display:flex;align-items:center;justify-content:space-between;
   gap:10px;text-align:left;padding:0 1px}
@@ -230,21 +262,24 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 /* 色が判らなくても読めるように、合否は記号と文字でも示す */
 .judge-mark{font-style:normal;margin-right:3px}
 .judge-tag{display:inline-flex;align-items:center;justify-content:center;gap:1px;padding:0 3px;border-radius:5px;
-  border:1px solid currentColor;font-weight:700;font-size:10px;line-height:15px;white-space:nowrap}
+  border:1px solid currentColor;font-weight:700;font-size:10px;line-height:14px;white-space:nowrap}
+/* 1行で済む行(適正・注記なし)の判定。記号だけを量の右に置く */
+.nut-val .judge-mark.inline{font-style:normal;font-size:12px;font-weight:800;margin-left:3px}
+.nut-val .judge-mark.inline.ok{color:var(--judge-ok)}
 .judge-tag.ok{background:none;color:var(--judge-ok)}
 .judge-tag.low,.judge-tag.high{background:none;color:var(--judge-warn)}
 .judge-tag.bad{background:none;color:var(--judge-bad)}
 .judge-tag.muted{background:none;color:var(--tx3)}
 .nut-detail .nut-bar > i.muted{background:var(--line)}
-.score-group-body{margin-top:5px;padding:0 2px 0 4px;border-left:2px solid var(--line)}
+.score-group-body{margin-top:3px;padding:0 2px 0 4px;border-left:2px solid var(--line)}
 .score-more{border-top:1px solid var(--line);margin-top:3px;padding-top:5px}
-.score-more summary{padding:7px 5px;color:var(--accent-text);font-size:12px;font-weight:700;cursor:pointer}
+.score-more summary{padding:5px;color:var(--accent-text);font-size:12px;font-weight:700;cursor:pointer}
 .score-more-body{padding-left:5px}
 /* 1行目: 名前｜バー｜摂取量。2行目: 判定と注記。
    判定を1行目から外したのは、375px幅だとバーが70pxしか残らなかったため */
 .nut-detail{display:grid;width:100%;
-  grid-template-columns:5.9em 1fr 4.3em;align-items:center;column-gap:7px;
-  padding:5px 3px 4px;border-top:1px solid var(--line);text-align:left}
+  grid-template-columns:5.9em 1fr 4.6em;align-items:center;column-gap:7px;
+  padding:3px 3px 2px;border-top:1px solid var(--line);text-align:left}
 .nut-detail:first-child{border-top:0}
 .nut-detail.tappable{border-radius:8px}
 .nut-detail.tappable:active{background:#f2f5f3}
@@ -265,9 +300,9 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .src-sweets{background:var(--src-sweets)}
 .src-alcohol{background:var(--src-alcohol)}
 .src-supplement{background:var(--src-supplement)}
-.source-legend{display:flex;flex-wrap:wrap;gap:5px 11px;margin:10px 0 1px;color:var(--tx2);font-size:12px}
+.source-legend{display:flex;flex-wrap:wrap;gap:3px 9px;margin:6px 0 1px;color:var(--tx2);font-size:11px}
 .source-legend span{display:flex;align-items:center;gap:4px}
-.source-legend i{display:inline-block;width:12px;height:12px;border-radius:3px}
+.source-legend i{display:inline-block;width:11px;height:11px;border-radius:3px}
 .source-legend i{border:1px solid rgba(20,26,32,.22)}
 /* 凡例の見本もバーと同じ網かけにする。見本と現物が違うと読み替えが要る */
 .source-legend i.lg-zone{background-color:var(--zone-bg);
@@ -283,41 +318,47 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .amount-fld > span{margin-bottom:2px}
 .drum{display:block;margin:2px 0 6px}
 .drum-wheel{position:relative;display:flex;justify-content:center;align-items:stretch;gap:2px;
-  height:180px}
-.drum-wheel::before,.drum-wheel::after{content:"";position:absolute;left:0;right:0;height:62px;
+  height:200px}
+.drum-wheel::before,.drum-wheel::after{content:"";position:absolute;left:0;right:0;height:70px;
   z-index:2;pointer-events:none}
 .drum-wheel::before{top:0;background:linear-gradient(to bottom,var(--card) 8%,rgba(0,0,0,0))}
 .drum-wheel::after{bottom:0;background:linear-gradient(to top,var(--card) 8%,rgba(0,0,0,0))}
-.drum-col{position:relative;z-index:1;width:44px;height:100%;overflow-y:scroll;
+.drum-col{position:relative;z-index:1;width:48px;height:100%;overflow-y:scroll;
   scroll-snap-type:y mandatory;overscroll-behavior:contain;scrollbar-width:none;
   border-radius:10px;outline:none;touch-action:pan-y}
 .drum-col::-webkit-scrollbar{display:none}
-.drum-col.wide{width:58px}
+.drum-col.wide{width:62px}
 .drum-col:focus-visible{box-shadow:inset 0 0 0 2px var(--accent-text)}
-.drum-pad{height:72px}
-.drum-item{height:36px;line-height:36px;text-align:center;scroll-snap-align:center;cursor:pointer;
-  font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--tx3)}
+.drum-pad{height:80px}
+.drum-item{height:40px;line-height:40px;text-align:center;scroll-snap-align:center;cursor:pointer;
+  font-size:23px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--tx3)}
 .drum-item.on{color:var(--tx);font-weight:800}
 /* 重さの頭の0(0150 の 0)は薄くして、150 と読めるようにする */
 .drum-col.lead .drum-item.on{color:var(--tx3);font-weight:600}
 .drum-sep,.drum-unit{position:relative;z-index:1;align-self:center;color:var(--tx)}
 .drum-sep{width:10px;text-align:center;font-size:24px;font-weight:800}
 .drum-unit{margin-left:6px;font-size:15px;font-weight:700;color:var(--tx2)}
-.drum-band{position:absolute;left:0;right:0;top:72px;height:36px;z-index:0;pointer-events:none;
+.drum-band{position:absolute;left:0;right:0;top:80px;height:40px;z-index:0;pointer-events:none;
   border-radius:10px;background:rgba(127,140,155,.16);box-shadow:inset 0 0 0 1px var(--line)}
+/* 中央(確定位置)を押したときの手ごたえ。iOSのWebではカチカチという振動は出せないので光らせる */
+.drum-band.tapped{animation:drumTap .32s ease-out}
+@keyframes drumTap{
+  0%{background:rgba(127,140,155,.16)}
+  30%{background:rgba(58,167,109,.38)}
+  100%{background:rgba(127,140,155,.16)}}
 .amount-over{margin-top:4px;font-size:12px;font-weight:700;color:var(--warning-text)}
 
 /* 「今日ではない日を開いています」の注意。読み飛ばされては困るので枠で囲む */
 .date-warn{margin:0 0 10px;padding:8px 10px;border-radius:8px;font-size:13px;line-height:1.5;
   color:var(--warning-text);background:rgba(215,130,20,.10);
   border:1px solid rgba(215,130,20,.45)}
-.aim-legend{display:flex;flex-wrap:wrap;gap:3px 12px;margin:4px 0 1px;color:var(--tx2);font-size:11px}
+.aim-legend{display:flex;flex-wrap:wrap;gap:2px 10px;margin:3px 0 1px;color:var(--tx2);font-size:10.5px}
 .aim-legend b{font-size:12px;margin-right:2px}
 .nut-bar.source-stack > i + i,.summary .bar.source-stack > i + i{
   box-shadow:inset 1px 0 rgba(255,255,255,.72)}
 /* 2行目。判定を左、注記を右に置く */
-.nut-flags{grid-column:2 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;
-  margin-top:1px;color:var(--tx3);font-size:10px;line-height:1.3}
+.nut-flags{grid-column:2 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:1px 8px;
+  margin-top:0;color:var(--tx3);font-size:10px;line-height:1.25}
 .nut-flags .judge-tag{margin-right:auto}
 .nut-flags .nut-goal{color:var(--tx2)}
 .activity-breakdown{text-align:right;margin-top:3px}

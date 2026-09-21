@@ -20,7 +20,7 @@
 (function (global) {
   'use strict';
 
-  var ROW = 36;   // 1段の高さ(px)。CSS の .drum-item と合わせる。小数にするとスナップ位置がずれる
+  var ROW = 40;   // 1段の高さ(px)。CSS の .drum-item と合わせる。小数にするとスナップ位置がずれる
 
   var KINDS = {
     count: {
@@ -118,10 +118,27 @@
       ['touchstart', 'pointerdown', 'wheel'].forEach(function (t) {
         el.addEventListener(t, function () { st.target = null; }, { passive: true });
       });
-      // 見えている段をタップすると、その段まで回す
+      /* 見えている段をタップすると、その段まで回す。
+         スクロールする要素は、指が少し動いただけで click が出ないことがあるため、
+         指を置いた位置と離した位置を自分で見て判定する(タップが効かないという指摘への対処)。
+         押した場所は要素の中の位置から出すので、数字の上を外しても効く */
+      var down = null;
+      el.addEventListener('touchstart', function (e) {
+        var t = e.touches[0];
+        down = { x: t.clientX, y: t.clientY, at: Date.now(), top: el.scrollTop };
+      }, { passive: true });
+      el.addEventListener('touchend', function (e) {
+        var d = down; down = null;
+        if (!d) return;
+        var t = e.changedTouches[0];
+        if (Math.abs(t.clientX - d.x) + Math.abs(t.clientY - d.y) > 14) return;  // なぞった
+        if (Math.abs(el.scrollTop - d.top) > 4) return;                           // 回した
+        if (Date.now() - d.at > 600) return;                                      // 長押し
+        tapAt(st, t.clientY);
+      }, { passive: true });
       el.addEventListener('click', function (e) {
-        var it = e.target.closest('.drum-item');
-        if (it) go(st, parseInt(it.dataset.i, 10), true);
+        if (e.detail === 0) return;      // キー操作から来た click は無視する
+        tapAt(st, e.clientY);
       });
       el.addEventListener('keydown', function (e) {
         var d = { ArrowUp: 1, ArrowDown: -1, PageUp: 5, PageDown: -5 }[e.key];
@@ -134,6 +151,23 @@
     });
 
     function fix(st, i) { return clamp(Math.round(i), 0, st.size - 1); }
+
+    /* 押された高さから「中央から何段ぶん上/下か」を出して回す。
+       中央(いま選ばれている段)を押したときは動かさず、帯を一瞬光らせて反応を返す */
+    function tapAt(st, clientY) {
+      var box = st.el.getBoundingClientRect();
+      var step = Math.round((clientY - box.top - box.height / 2) / ROW);
+      if (!step) { blink(); return; }
+      go(st, st.idx + step, true);
+    }
+
+    function blink() {
+      var band = host.querySelector('.drum-band');
+      if (!band) return;
+      band.classList.remove('tapped');
+      void band.offsetWidth;
+      band.classList.add('tapped');
+    }
 
     function digits() {
       var d = {};

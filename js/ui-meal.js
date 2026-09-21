@@ -80,27 +80,35 @@
     var goal = tg.kcal.goal;
     var net = kcal - burned;
     var over = net > goal;
-    var rest = goal - net;
+    // 運動の消費は小数を持つので、画面に出す前に丸める(261.3000000000002 と出ていた)
+    var rest = Math.round(goal - net);
+    burned = Math.round(burned);
+    /* 上半分(カロリー・残り・バー)は下へスクロールしても残るように固定する。
+       残りカロリーはバーのすぐ上に置き、数字とバーを一度に見られるようにする。
+       内訳の凡例から下は、場所を取るので固定しない */
     return '' +
-      '<button type="button" class="summary summary-link" data-open-score="1" aria-label="採点を見る">' +
+      '<div class="summary-pin">' +
+      '<button type="button" class="summary summary-top summary-link" data-open-score="1" aria-label="採点を見る">' +
         '<div class="sum-main">' +
           '<div><span class="sum-kcal">' + kcal + '</span><span class="sum-unit">kcal</span></div>' +
-          '<div class="sum-meta"><div class="sum-goal">目標 ' + goal + ' kcal</div>' +
-            '<span class="sum-action">採点を見る ›</span></div>' +
+          '<div class="sum-goal">目標 ' + goal + ' kcal</div>' +
         '</div>' +
-        '<div class="summary-source-panel">' + summarySourceBar(sources, kcal, goal, over) +
-          '<div class="source-legend summary-source-legend" aria-label="摂取カロリーの内訳">' +
-            '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
-            '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>' +
+        '<div class="sum-rest">' +
+          '<span class="ellip">' + (burned ? '運動 -' + burned + ' ／ ' : '') +
+            (over ? '<b>' + Math.abs(rest) + '</b> kcal オーバー'
+                  : 'あと <b>' + rest + '</b> kcal') + '</span>' +
+          '<span class="sum-action">採点を見る ›</span>' +
         '</div>' +
-        '<div class="sum-goal">' +
-          (burned ? '運動 -' + burned + ' kcal ／ ' : '') +
-          (over ? '目標を ' + Math.abs(rest) + ' kcal オーバー' : 'あと ' + rest + ' kcal') +
-        '</div>' +
+        '<div class="summary-source-panel">' + summarySourceBar(sources, kcal, goal, over) + '</div>' +
+      '</button></div>' +
+      '<button type="button" class="summary summary-sub summary-link" data-open-score="1" aria-label="採点を見る">' +
+        '<div class="source-legend summary-source-legend" aria-label="摂取カロリーの内訳">' +
+          '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
+          '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>' +
         '<div class="pfc">' +
-          pfcCell('P たんぱく質', t.protein, tg.protein.goal, 'g') +
-          pfcCell('F 脂質', t.fat, tg.fat.goal, 'g') +
-          pfcCell('C 炭水化物', t.carb, tg.carb.goal, 'g') +
+          pfcCell('P たんぱく質', t.protein, tg.protein.goal, 'g', 'min') +
+          pfcCell('F 脂質', t.fat, tg.fat.goal, 'g', 'max') +
+          pfcCell('C 炭水化物', t.carb, tg.carb.goal, 'g', 'max') +
         '</div>' +
         (noPfc
           ? '<div class="sum-note">' + noPfc + '／' + total +
@@ -108,6 +116,22 @@
             'その食品をタップ →「栄養素を入力」で補えます。</div>'
           : '') +
       '</button>';
+  }
+
+  /* 記録したあと、その食事が見える位置へ戻す。
+     画面を描き直すと一番上に戻ってしまい、どこに入ったのか分からなかった。
+     描き直しの直後は要素がまだ無いことがあるので、少し待って探し直す */
+  function focusSlot(slot, tries) {
+    if (!slot) return;
+    var el = document.querySelector('.card[data-slot="' + slot + '"]');
+    if (!el) {
+      if ((tries || 0) < 6) setTimeout(function () { focusSlot(slot, (tries || 0) + 1); }, 80);
+      return;
+    }
+    var hdr = document.getElementById('appHeader');
+    var pin = document.querySelector('.summary-pin');
+    var off = (hdr ? hdr.offsetHeight : 0) + (pin ? pin.offsetHeight : 0) + 6;
+    window.scrollTo(0, Math.max(0, window.scrollY + el.getBoundingClientRect().top - off));
   }
 
   function summarySourceBar(sources, kcal, goal, over) {
@@ -134,9 +158,15 @@
       typeof n.carb === 'number';
   }
 
-  function pfcCell(label, v, goal, unit) {
-    // 1段目に「摂取量 / 目標」、2段目にPFCの名前。分子を大きく、分母を小さく
-    return '<div><b>' + Math.round(v || 0) + '<span class="of">/' + goal + unit + '</span></b>' +
+  function pfcCell(label, v, goal, unit, kind) {
+    /* 1段目に「摂取量 / 目標」、2段目にPFCの名前。分子を大きく、分母を小さく。
+       枠そのものを縦のバーに見立て、下から色がせり上がる量でも分かるようにする。
+       たんぱく質は多い分には困らないので、超えても色は変えない */
+    var val = v || 0;
+    var pct = goal ? Math.max(0, Math.min(100, val / goal * 100)) : 0;
+    var over = (kind === 'max') && goal && val > goal;
+    return '<div class="pfc-cell' + (over ? ' over' : '') + '" style="--fill:' + Math.round(pct) + '%">' +
+      '<b>' + Math.round(val) + '<span class="of">/' + goal + unit + '</span></b>' +
       '<span>' + label + '</span></div>';
   }
 
@@ -254,14 +284,15 @@
           ]).then(function () {
             A().toast(slotName(skipSlot) + 'を「食べなかった」にしました' +
               (kept.length ? '（' + kept.length + '件は戻せます）' : ''));
-            A().render();
+            A().render(); focusSlot(skipSlot);
           });
         });
       }
       if (t.dataset.unskip) {
-        return S.Entries.setSkipped(state.date, t.dataset.unskip, false).then(function (n) {
+        var backSlot = t.dataset.unskip;
+        return S.Entries.setSkipped(state.date, backSlot, false).then(function (n) {
           if (n) A().toast(n + '件の記録を戻しました');
-          A().render();
+          A().render(); focusSlot(backSlot);
         });
       }
       if (t.dataset.comboFrom) {
@@ -794,7 +825,7 @@
       }).then(function () {
         A().backSheet();
         A().toast(c.name + ' を記録しました（' + (c.items || []).length + '品）');
-        A().render();
+        A().render(); focusSlot(slot);
       });
     });
     body.querySelector('#editCombo').addEventListener('click', function () {
@@ -1232,7 +1263,7 @@
           return null;
         }).then(function () {
           if (pick.ref && pick.ref.type === 'my') S.MyFoods.touch(pick.ref.id);
-          A().render();
+          A().render(); focusSlot(slot);
           // 続けて何品も足せるよう、閉じずに1つ前(検索一覧)へ戻る
           if (existingId) { A().closeSheet(); A().toast('更新しました'); }
           else { A().backSheet(); A().toast(pick.name + ' を記録しました'); }
@@ -1248,7 +1279,7 @@
       delBtn.addEventListener('click', function () {
         if (!confirm('この記録を削除しますか？')) return;
         S.Entries.remove(existingId, '「削除する」を押した').then(function () {
-          A().closeSheet(); A().toast('削除しました'); A().render();
+          A().closeSheet(); A().toast('削除しました'); A().render(); focusSlot(slot);
         });
       });
     }
