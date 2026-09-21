@@ -36,8 +36,8 @@
       scored: ['salt', 'satfat'], shown: ['salt', 'satfat', 'chol'], more: [] },
     { key: 'micro', icon: '🥬', label: 'ビタミン・ミネラル', weight: 24,
       scored: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc'],
-      shown: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc', 'vite'],
-      more: ['k'] },
+      shown: ['fiber', 'k', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc', 'vite'],
+      more: [] },
     { key: 'exercise', icon: '🏃', label: '運動', weight: 10,
       scored: ['exercise'], shown: ['exercise'], more: [] }
   ];

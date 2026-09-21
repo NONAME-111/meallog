@@ -163,6 +163,11 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .sum-note{margin-top:9px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.16);
   font-size:11px;line-height:1.5}
 
+/* 非公式の出典から取り込んだメニューの印。公式の公表値と見分けられるようにする */
+.tag-unofficial{display:inline-block;margin-left:5px;padding:0 5px;border-radius:999px;
+  border:1px solid var(--warning-text);color:var(--warning-text);
+  font-size:10px;font-style:normal;font-weight:700;vertical-align:middle}
+
 /* 履歴の絞り込み(朝食/昼食/夕食/間食) */
 .chips-row{display:flex;flex-wrap:wrap;margin-bottom:2px}
 .chips-row[hidden]{display:none}

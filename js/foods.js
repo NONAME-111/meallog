@@ -375,20 +375,40 @@
   function loadMenu() {
     if (MENU) return Promise.resolve(MENU);
     if (menuLoading) return menuLoading;
-    menuLoading = fetch('data/menu-items.json')
-      .then(function (r) { return r.ok ? r.json() : { items: [], sources: [] }; })
-      .then(function (j) {
-        var list = (j.items || []).map(function (row, i) {
-          return {
-            i: i, shop: row[0], name: row[1], unit: row[2] || '食',
-            nut: row[3] || {}, note: row[4] || '',
-            key: norm(row[0] + ' ' + row[1])
-          };
+    var blank = { items: [], sources: [] };
+    var get = function (url) {
+      return fetch(url).then(function (r) { return r.ok ? r.json() : blank; })
+        .catch(function () { return blank; });
+    };
+    /* 公式の公表値(menu-items.json)と、非公式の出典(FatSecret)を合わせて読む。
+       非公式は official:false を立て、画面で必ず「非公式」と分かるようにする。
+       先読みするのは公式のぶんだけ(非公式は266KBあるので、検索したときに読む) */
+    menuLoading = Promise.all([
+      get('data/menu-items.json'),
+      get('data/menu-items-unofficial.json')
+    ]).then(function (r) {
+      var list = [];
+      (r[0].items || []).forEach(function (row) {
+        list.push({
+          i: list.length, shop: row[0], name: row[1], unit: row[2] || '食',
+          nut: row[3] || {}, note: row[4] || '', official: true,
+          key: norm(row[0] + ' ' + row[1])
         });
-        MENU = { list: list, sources: j.sources || [], count: list.length };
-        return MENU;
-      })
-      .catch(function () { MENU = { list: [], sources: [], count: 0 }; return MENU; });
+      });
+      (r[1].items || []).forEach(function (row) {
+        list.push({
+          i: list.length, shop: row[0], name: row[1], unit: '食',
+          nut: row[3] || {}, note: row[2] || '', official: false,
+          key: norm(row[0] + ' ' + row[1])
+        });
+      });
+      MENU = {
+        list: list,
+        sources: (r[0].sources || []).concat(r[1].sources || []),
+        count: list.length
+      };
+      return MENU;
+    }).catch(function () { MENU = { list: [], sources: [], count: 0 }; return MENU; });
     return menuLoading;
   }
 
@@ -396,11 +416,13 @@
     return loadMenu().then(function (db) {
       var q = norm(text || '');
       if (!q) return [];
-      var out = [];
-      for (var i = 0; i < db.list.length && out.length < (limit || 12); i++) {
-        if (db.list[i].key.indexOf(q) !== -1) out.push(db.list[i]);
+      var hit = [];
+      for (var i = 0; i < db.list.length && hit.length < (limit || 12) * 3; i++) {
+        if (db.list[i].key.indexOf(q) !== -1) hit.push(db.list[i]);
       }
-      return out;
+      // 公式の公表値を先に出す
+      hit.sort(function (a, b) { return (b.official ? 1 : 0) - (a.official ? 1 : 0); });
+      return hit.slice(0, limit || 12);
     });
   }
 

@@ -39,6 +39,28 @@
         medians[k] = median(candidates.map(function (c) { return c.perKcal[k]; }));
       });
 
+      /* 食品群ごとの「カロリーあたりの栄養素」の中央値。
+         カロリーしか分からない食品を補うときに使う。
+         全食品の中央値だと、菓子にカリウムが4.4倍・ビタミンB2が5.6倍、
+         し好飲料にビタミンB1が6.1倍ついてしまった(2026-09-22 実測)。 */
+      var groupMedians = {};
+      var byGroup = {};
+      candidates.forEach(function (c) {
+        var g = c.food.g;
+        if (!g) return;
+        (byGroup[g] = byGroup[g] || []).push(c);
+      });
+      Object.keys(byGroup).forEach(function (g) {
+        var list = byGroup[g];
+        if (list.length < 5) return;      // 少なすぎる群は当てにならないので使わない
+        var m = {};
+        F.KEYS.forEach(function (k) {
+          if (k === 'kcal') return;
+          m[k] = median(list.map(function (c) { return c.perKcal[k]; }));
+        });
+        groupMedians[g] = m;
+      });
+
       var rules = (cats.rules || []).map(function (rule) {
         var copy = {};
         for (var k in rule) copy[k] = rule[k];
@@ -51,6 +73,7 @@
         byId: byId,
         candidates: candidates,
         medians: medians,
+        groupMedians: groupMedians,
         rules: rules,
         excludes: (cats.excludes || []).map(F.norm).filter(Boolean)
       };
@@ -228,6 +251,20 @@
       var needsNutrients = F.KEYS.some(function (k) { return k !== 'kcal' && !finite(out[k]); });
       if (!needsNutrients) return null;
 
+      /* カロリーしか分かっていない食品から、たんぱく質やビタミン・ミネラルを作り出さない。
+         2026-09-22の実測(成分表の食品を伏せて推定させ真値と比較)では、
+           菓子類のカリウム4.4倍・ビタミンB2 5.6倍 / し好飲料のビタミンB1 6.1倍 /
+           肉類の鉄4.8倍 / 逆に野菜類はビタミンC 0.03倍・食物繊維 0.11倍
+         と当てにならず、1日分でも カリウム+26%・亜鉛+26%・たんぱく質+32%(目標比)ずれていた。
+         カロリーあたりの栄養素は食品によって桁が違うので、原理的に当てられない。
+         分からないものは分からないままにし、採点側で「値が不明」として扱う。
+         ただし、重さまで決まっている規則(recipe / grams付きの辞書)は根拠があるので使う。 */
+      var macrosKnown = MACROS.filter(function (k) { return finite(out[k]); }).length;
+      if (macrosKnown < 2) {
+        var pinned = rule && (rule.recipe || (rule.ref && ruleGrams(rule, opts) != null));
+        if (!pinned) return null;
+      }
+
       if (rule && rule.recipe) {
         var recipe = recipeNutrients(rule, model);
         if (recipe && finite(recipe.nutrients.kcal) && recipe.nutrients.kcal > 0) {
@@ -241,7 +278,13 @@
 
       if (rule && rule.ref && model.byId[rule.ref]) {
         var grams = ruleGrams(rule, opts);
-        if (grams == null) grams = fitGrams(out, model.byId[rule.ref]);
+        /* カロリーしか分かっていないときは、特定の食品に当てはめてカロリー比例で
+           伸ばさない。脂や砂糖でカロリーだけ高い食品だと、参照先の重さを何倍にも
+           見積もってしまい、栄養素がその倍率でついてしまう
+           (実測: 肉類の鉄4.8倍・ビタミンA4.1倍、菓子のカリウム4.4倍)。
+           重さが決まっている規則(grams)はそのまま使ってよい */
+        var knownMacros = MACROS.filter(function (k) { return finite(out[k]); }).length;
+        if (grams == null && knownMacros >= 2) grams = fitGrams(out, model.byId[rule.ref]);
         if (grams != null) {
           addFromFood(out, model.byId[rule.ref], grams, added);
           return finish(out, known, added, {
@@ -260,6 +303,16 @@
             conf: 'mid', ref: '', cat: rule.cat || '', method: 'group-knn'
           }, opts.est);
         }
+        /* PFCが分からないと近傍を選べない(nearest は2つ以上の主要栄養素が要る)。
+           そのときは、せめて同じ食品群の中央値を使う。
+           全食品の中央値だと、菓子・飲料に栄養素が数倍ついてしまう */
+        var gm = model.groupMedians[rule.grp];
+        if (gm) {
+          addPerKcal(out, gm, out.kcal, added);
+          return finish(out, known, added, {
+            conf: 'low', ref: '', cat: rule.cat || '', method: 'group-median'
+          }, opts.est);
+        }
       }
 
       var prediction = nearest(out, model.candidates);
@@ -268,6 +321,17 @@
         return finish(out, known, added, {
           conf: 'low', ref: '', cat: '', method: 'knn'
         }, opts.est);
+      }
+
+      // 辞書に当たった食品の群が分かるなら、その群の中央値を使う
+      if (rule && rule.ref && model.byId[rule.ref]) {
+        var refGroup = model.groupMedians[model.byId[rule.ref].g];
+        if (refGroup) {
+          addPerKcal(out, refGroup, out.kcal, added);
+          return finish(out, known, added, {
+            conf: 'low', ref: rule.ref, cat: rule.cat || '', method: 'group-median'
+          }, opts.est);
+        }
       }
 
       addPerKcal(out, model.medians, out.kcal, added);
