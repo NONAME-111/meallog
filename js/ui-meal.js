@@ -99,12 +99,14 @@
                   : 'あと <b>' + rest + '</b> kcal') + '</span>' +
           '<span class="sum-action">採点を見る ›</span>' +
         '</div>' +
-        '<div class="summary-source-panel">' + summarySourceBar(sources, kcal, goal, over) + '</div>' +
+        // 凡例はバーと同じ白いパネルの中に置く(何色が何かを、バーを見ながら確かめられる)
+        '<div class="summary-source-panel">' + summarySourceBar(sources, kcal, goal, over) +
+          '<div class="source-legend summary-source-legend" aria-label="摂取カロリーの内訳">' +
+            '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
+            '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>' +
+        '</div>' +
       '</button></div>' +
       '<button type="button" class="summary summary-sub summary-link" data-open-score="1" aria-label="採点を見る">' +
-        '<div class="source-legend summary-source-legend" aria-label="摂取カロリーの内訳">' +
-          '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
-          '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span></div>' +
         '<div class="pfc">' +
           pfcCell('P たんぱく質', t.protein, tg.protein.goal, 'g', 'min') +
           pfcCell('F 脂質', t.fat, tg.fat.goal, 'g', 'max') +

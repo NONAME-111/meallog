@@ -28,13 +28,16 @@
       scored: ['kcal'], shown: ['kcal'], more: [] },
     { key: 'pfc', icon: '🍚', label: 'PFCバランス', weight: 24,
       scored: ['protein', 'fat', 'sugar'], shown: ['protein', 'fat', 'sugar', 'carb'], more: [] },
+    /* 「その他の項目」は、ほとんどが成分表からの推定で埋まっていて当てにならないので v32 で整理した。
+       ・塩分・脂質の質: 一価/多価不飽和・n-3・n-6 は全部やめる
+       ・ビタミン・ミネラル: カリウムだけ残す。食塩を摂りすぎた日の打ち消し(サプリを含む)を
+         見たいため。ほかの7項目(マグネシウム・亜鉛・ビタミンD・ナイアシン・B6・B12・葉酸)はやめる */
     { key: 'quality', icon: '🧂', label: '塩分・脂質の質', weight: 12,
-      scored: ['salt', 'satfat'], shown: ['salt', 'satfat', 'chol'],
-      more: ['monofat', 'polyfat', 'n3', 'n6'] },
+      scored: ['salt', 'satfat'], shown: ['salt', 'satfat', 'chol'], more: [] },
     { key: 'micro', icon: '🥬', label: 'ビタミン・ミネラル', weight: 24,
       scored: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc'],
       shown: ['fiber', 'ca', 'fe', 'vita', 'vitb1', 'vitb2', 'vitc', 'vite'],
-      more: ['k', 'mg', 'zn', 'vitd', 'niacin', 'vitb6', 'vitb12', 'folate'] },
+      more: ['k'] },
     { key: 'exercise', icon: '🏃', label: '運動', weight: 10,
       scored: ['exercise'], shown: ['exercise'], more: [] }
   ];
@@ -419,8 +422,12 @@
       'カロリーは目標の5%超過から減点が始まり、30%超で0点です（不足は15%まで許容）。' +
       '超過が1割を超えた日は総合点にも上限をかけます（25%超で70点、40%超で40点）。' +
       '体重の増減を決めるのは収支なので、カロリーの配点を最大にしています。<br>' +
-      '「栄養データ○%」はその栄養素の値が分かっている割合で、9割を切ったときだけ出します。' +
-      '「うち推定○%」は食品成分表から補った割合です。<br>' +
+      '「値が不明 ○%」は、その日食べたもののうち、カロリーに直して○%ぶんの食品に、' +
+      'その栄養素の値が登録されていないという意味です。' +
+      '表示している量にはその分が入っていないので、実際はもっと多い可能性があります' +
+      '（1割を切るまでは出しません）。' +
+      '「推定で補った ○%」も同じ数え方で、カロリーに直して○%ぶんの食品の値を' +
+      '食品成分表から推定して埋めた、という意味です。どちらも量(g)の割合ではありません。<br>' +
       '目標値は「日本人の食事摂取基準(2025年版)」の18〜64歳の推奨量・目安量・目標量が基準です。' +
       '</div></details></div>';
   }
@@ -564,30 +571,32 @@
     } else {
       h += '<span class="nut-bar"></span>';
     }
-    /* 注記(2行目)を出すかどうか。適正で注記も無い行は1行で済ませ、画面を短くする。
-       そのぶん判定は量の右に記号(◎)で出す。色だけに頼らないので、記号は必ず付ける */
+    /* 適正なら必ず量の右に◎、適正でなければ必ず下に文字。色だけに頼らないので記号は必ず付ける。
+       v31までは「注記が無い行だけ◎」にしていたため、注記のある糖質だけ下に「◎適正」が残り、
+       たんぱく質・炭水化物からは適正の印が消えたように見えていた */
     var lowData = (key !== 'exercise' && cov < 0.9);
     var mostlyEstimated = est >= 0.5;   // 半分以上が推定のときだけ知らせる(全行に出ると邪魔)
     var isExercise = (key === 'exercise' && activity && activity.hasData);
-    var flat = (cls === 'ok') && !lowData && !mostlyEstimated && !isExercise &&
-      !(detail && detail.excluded);
+    var okRow = (cls === 'ok') && !!judge;
+    var hasNote = lowData || mostlyEstimated || isExercise || !!(detail && detail.excluded);
     h += '<span class="nut-val"><b>' + (est > 0 ? '約' : '') +
       (known ? N.fmt(value) : '—') + '</b><i>' + A().esc(meta[1]) + '</i>' +
-      (flat && judge
+      (okRow
         ? '<i class="judge-mark inline ' + cls + '" title="' + A().esc(judgeFull) +
           '" aria-label="' + A().esc(judgeFull) + '">' + JUDGE_MARK[cls] + '</i>'
         : '') +
       (clickable ? '<em>›</em>' : '') + '</span>';
-    if (flat) return h + '</' + tag + '>';
-    // 2行目: 判定と、例外があればその注記。判定を1行目から外したぶんバーが広くなる
-    var notes = judge
+    if (okRow && !hasNote) return h + '</' + tag + '>';
+    // 2行目: 適正でないときの判定と、値の確からしさの注記
+    var notes = (judge && !okRow)
       ? '<span class="judge-tag ' + cls + '" aria-label="' + A().esc(judgeFull) +
         '"><i class="judge-mark" aria-hidden="true">' + JUDGE_MARK[cls] + '</i>' + judge + '</span>'
       : '';
     if (detail && detail.excluded) notes += '<span>採点対象外</span>';
-    // カバー率は9割を切ったときだけ。ふだん出すと何のことか分からず邪魔になる
-    if (lowData) notes += '<span>栄養データ ' + Math.round(cov * 100) + '%</span>';
-    if (mostlyEstimated) notes += '<span>うち推定 ' + Math.round(est * 100) + '%</span>';
+    /* 「栄養データ80%」では意味が伝わらなかったので、足りない側を書く。
+       どちらも「その日の食品をカロリーで割った割合」で、分母は同じ(量(g)の割合ではない) */
+    if (lowData) notes += '<span>値が不明 ' + Math.round((1 - cov) * 100) + '%</span>';
+    if (mostlyEstimated) notes += '<span>推定で補った ' + Math.round(est * 100) + '%</span>';
     if (key === 'exercise' && activity && activity.hasData) {
       notes += '<span>運動記録 ' + N.fmt(activity.exerciseKcal) + ' kcal ＋ ' +
         (activity.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数由来 ') +
