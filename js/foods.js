@@ -335,6 +335,98 @@
     return prodLoading;
   }
 
+  /* ---- 同梱の商品データ(Open Food Facts の日本の商品) ----
+     約4,565件・0.7MB。起動時には読まない。バーコードを読んだときなど、
+     必要になって初めて読む(通信は初回だけ。あとは Service Worker の控えから)。
+     1行 = [バーコード, 名前, ブランド, 内容量, 1食分の表記, 栄養素(100gあたり)] */
+  var OFF = null, offLoading = null;
+
+  function loadOff() {
+    if (OFF) return Promise.resolve(OFF);
+    if (offLoading) return offLoading;
+    offLoading = fetch('data/off-japan.json')
+      .then(function (r) { return r.ok ? r.json() : { items: [] }; })
+      .then(function (j) {
+        var byCode = {}, list = [];
+        (j.items || []).forEach(function (row) {
+          var item = {
+            code: row[0], name: row[1], brand: row[2], qty: row[3],
+            serving: row[4], per100: row[5],
+            // 7つ目は「要確認」の印(いまは食塩が極端に多い行)。値は出典のまま
+            warn: row[6] || '',
+            key: norm(row[1] + ' ' + (row[2] || ''))
+          };
+          byCode[item.code] = item;
+          list.push(item);
+        });
+        OFF = { byCode: byCode, list: list, count: list.length, source: j.source || 'Open Food Facts' };
+        return OFF;
+      })
+      .catch(function () { OFF = { byCode: {}, list: [], count: 0, source: '' }; return OFF; });
+    return offLoading;
+  }
+
+  function offReady() { return !!OFF; }
+
+  /* ---- 外食チェーンのメニュー(app/data/menu-items.json) ----
+     45KBと小さいので、検索のときにまとめて読む。1行 = [店名, 商品名, 単位, 栄養素, 備考] */
+  var MENU = null, menuLoading = null;
+
+  function loadMenu() {
+    if (MENU) return Promise.resolve(MENU);
+    if (menuLoading) return menuLoading;
+    menuLoading = fetch('data/menu-items.json')
+      .then(function (r) { return r.ok ? r.json() : { items: [], sources: [] }; })
+      .then(function (j) {
+        var list = (j.items || []).map(function (row, i) {
+          return {
+            i: i, shop: row[0], name: row[1], unit: row[2] || '食',
+            nut: row[3] || {}, note: row[4] || '',
+            key: norm(row[0] + ' ' + row[1])
+          };
+        });
+        MENU = { list: list, sources: j.sources || [], count: list.length };
+        return MENU;
+      })
+      .catch(function () { MENU = { list: [], sources: [], count: 0 }; return MENU; });
+    return menuLoading;
+  }
+
+  function menuSearch(text, limit) {
+    return loadMenu().then(function (db) {
+      var q = norm(text || '');
+      if (!q) return [];
+      var out = [];
+      for (var i = 0; i < db.list.length && out.length < (limit || 12); i++) {
+        if (db.list[i].key.indexOf(q) !== -1) out.push(db.list[i]);
+      }
+      return out;
+    });
+  }
+
+  function menuAt(i) {
+    return MENU && MENU.list[i] ? MENU.list[i] : null;
+  }
+
+  /* バーコードで引く。読み込みがまだなら、ここで読む */
+  function offByBarcode(code) {
+    code = String(code || '');
+    if (!code) return Promise.resolve(null);
+    return loadOff().then(function (db) { return db.byCode[code] || null; });
+  }
+
+  /* 名前で引く。読み込み前は何も返さない(検索のたびに0.7MBを取りに行かないため) */
+  function offSearch(text, limit) {
+    if (!OFF || !text) return [];
+    var q = norm(text);
+    if (!q) return [];
+    var out = [];
+    for (var i = 0; i < OFF.list.length && out.length < (limit || 12); i++) {
+      if (OFF.list[i].key.indexOf(q) !== -1) out.push(OFF.list[i]);
+    }
+    return out;
+  }
+
   /* 商品名から「1単位あたりの栄養素」を引く。無ければ null。 */
   function productFor(name) {
     if (!PROD) return null;
@@ -460,6 +552,8 @@
     searchCommon: searchCommon, commonById: commonById,
     loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
     loadProducts: loadProducts, productFor: productFor, mergeProduct: mergeProduct,
+    loadOff: loadOff, offByBarcode: offByBarcode, offSearch: offSearch, offReady: offReady,
+    loadMenu: loadMenu, menuSearch: menuSearch, menuAt: menuAt,
     loadCategories: loadCategories,
     productCount: function () { return PROD ? PROD.count : 0; },
     groupName: groupName, meta: meta, norm: norm, round: round, sugarOf: sugarOf,

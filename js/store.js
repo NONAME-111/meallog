@@ -4,7 +4,7 @@
   'use strict';
 
   var DB_NAME = 'meallog';
-  var DB_VER = 3;
+  var DB_VER = 4;   // 4: 読み取った商品の控え(products)を追加
   var dbp = null;
 
   function open() {
@@ -40,6 +40,11 @@
         if (!db.objectStoreNames.contains('combos')) {
           var cb = db.createObjectStore('combos', { keyPath: 'id' });
           cb.createIndex('used', 'usedAt');
+        }
+        /* バーコードで調べた商品の控え。登録しなくても残すので、
+           同じ商品を次に読んだときは端末内だけで引ける(圏外でも読める) */
+        if (!db.objectStoreNames.contains('products')) {
+          db.createObjectStore('products', { keyPath: 'code' });
         }
         void ev;
       };
@@ -565,6 +570,39 @@
   };
 
   /* ---------------- マイ食品(自作・バーコード紐付け) ---------------- */
+  /* バーコードで調べた商品の控え。マイ食品とは別に持つ。
+     マイ食品は「自分が登録したもの」、こちらは「調べた結果」。
+     件数がマイ食品の一覧に混ざらないよう、店は分けてある。 */
+  var Products = {
+    get: function (code) {
+      code = String(code || '');
+      if (!code) return Promise.resolve(null);
+      return run('products', 'readonly', function (s) { return reqp(s.get(code)); })
+        .then(function (rec) { return rec || null; })
+        .catch(function () { return null; });
+    },
+    put: function (rec) {
+      if (!rec || !rec.code) return Promise.resolve(null);
+      rec.code = String(rec.code);
+      rec.savedAt = Date.now();
+      return run('products', 'readwrite', function (s) { return reqp(s.put(rec)); })
+        .then(function () { return rec; })
+        .catch(function () { return null; });
+    },
+    all: function () {
+      return run('products', 'readonly', function (s) { return reqp(s.getAll()); })
+        .then(function (rows) { return rows || []; })
+        .catch(function () { return []; });
+    },
+    count: function () {
+      return run('products', 'readonly', function (s) { return reqp(s.count()); })
+        .catch(function () { return 0; });
+    },
+    clear: function () {
+      return run('products', 'readwrite', function (s) { return reqp(s.clear()); });
+    }
+  };
+
   var MyFoods = {
     all: function () {
       return run('myfoods', 'readonly', function (s) { return reqp(s.getAll()); })
@@ -810,12 +848,14 @@
       run('myfoods', 'readonly', function (s) { return reqp(s.getAll()); }),
       Settings.get(),
       run('daily', 'readonly', function (s) { return reqp(s.getAll()); }),
-      run('combos', 'readonly', function (s) { return reqp(s.getAll()); })
+      run('combos', 'readonly', function (s) { return reqp(s.getAll()); }),
+      // 読み取った商品の控え。機種変更のときに引き継げるよう、書き出しにも入れる
+      run('products', 'readonly', function (s) { return reqp(s.getAll()); })
     ]).then(function (r) {
       return {
-        app: 'meallog', version: 3, exportedAt: new Date().toISOString(),
+        app: 'meallog', version: 4, exportedAt: new Date().toISOString(),
         entries: r[0], body: r[1], exercise: r[2], myfoods: r[3], settings: r[4],
-        daily: r[5], combos: r[6]
+        daily: r[5], combos: r[6], products: r[7]
       };
     });
   }
@@ -824,10 +864,12 @@
     if (!data || data.app !== 'meallog') return Promise.reject(new Error('形式が違います'));
     invalidate();
     var replace = (mode === 'replace');
-    return run(['entries', 'body', 'exercise', 'myfoods', 'settings', 'daily', 'combos'],
+    return run(['entries', 'body', 'exercise', 'myfoods', 'settings', 'daily', 'combos', 'products'],
       'readwrite', function (st) {
-        var entries = st[0], body = st[1], ex = st[2], my = st[3], se = st[4], da = st[5], cb = st[6];
+        var entries = st[0], body = st[1], ex = st[2], my = st[3], se = st[4], da = st[5], cb = st[6],
+          pr = st[7];
         if (replace) { entries.clear(); body.clear(); ex.clear(); my.clear(); da.clear(); cb.clear(); }
+        (data.products || []).forEach(function (r) { if (r && r.code) pr.put(r); });
         (data.entries || []).forEach(function (r) { entries.put(r); });
         (data.body || []).forEach(function (r) { body.put(r); });
         (data.exercise || []).forEach(function (r) { ex.put(r); });
@@ -841,7 +883,7 @@
 
   function wipeAll() {
     invalidate();
-    return run(['entries', 'body', 'exercise', 'myfoods', 'daily', 'combos'], 'readwrite', function (st) {
+    return run(['entries', 'body', 'exercise', 'myfoods', 'daily', 'combos', 'products'], 'readwrite', function (st) {
       st.forEach(function (s) { s.clear(); });
       return true;
     });
@@ -849,7 +891,7 @@
 
   global.Store = {
     uid: uid, ymd: ymd, parseYmd: parseYmd, shiftYmd: shiftYmd,
-    Entries: Entries, Body: Body, Exercise: Exercise, MyFoods: MyFoods,
+    Entries: Entries, Body: Body, Exercise: Exercise, MyFoods: MyFoods, Products: Products,
     Settings: Settings, Daily: Daily, Combos: Combos, dayTotals: dayTotals,
     isSkip: isSkip, notSkip: notSkip, backfillSkipped: backfillSkipped,
     exportAll: exportAll, importAll: importAll, wipeAll: wipeAll,

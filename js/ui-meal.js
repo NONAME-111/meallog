@@ -530,7 +530,8 @@
         usedList(),
         histList(),
         comboList(),
-        F.search(text, { limit: 24 })
+        F.search(text, { limit: 24 }),
+        F.menuSearch(text, 12)
       ]).then(function (r) {
         var commons = r[0];
         var used = r[1].filter(function (x) { return nameHit(x.name, n, kana); }).slice(0, 12);
@@ -556,6 +557,11 @@
         if (commons.length) {
           html2 += group('食材', '1食分の目安つき',
             commons.map(function (x) { return resRow(x, 'common'); }).join(''));
+        }
+        // 外食チェーンの公表値。1食ぶんの値なので、量を選ばずそのまま記録できる
+        if (r[5] && r[5].length) {
+          html2 += group('お店のメニュー', '各社の公表値',
+            r[5].map(function (x) { return resRow(x, 'menu'); }).join(''));
         }
         if (hist.length) {
           html2 += group('履歴' + (histSlot ? '（' + slotName(histSlot) + '）' : ''), '',
@@ -639,6 +645,11 @@
             openAmount(state, slot, pick);
           });
         });
+      } else if (kind === 'menu') {
+        // 外食チェーンの公表値。1食ぶんなので、そのまま数量画面へ
+        var mi = F.menuAt(parseInt(id, 10));
+        if (!mi) { A().backSheet(); A().toast('このメニューを開けませんでした'); return; }
+        openAmount(state, slot, fromMenu(mi));
       } else if (kind === 'seibun') {
         F.byId(id).then(function (f) {
           if (f) openAmount(state, slot, fromSeibun(f)); else A().backSheet();
@@ -724,6 +735,14 @@
         '<b>' + A().esc(x.label) + '</b><span>' +
         (x.unitLabel ? A().esc(x.unitLabel) + ' ' : '') + x.g + 'g ・ ' + x.kcal + ' kcal ／ ' +
         A().esc(x.src) + '</span></button>';
+    }
+    if (kind === 'menu') {
+      var mk = x.nut || {};
+      return '<button class="res" data-pick="' + x.i + '" data-kind="menu">' +
+        '<b>' + A().esc(x.name) + '</b><span>' + A().esc(x.shop) + ' ・ 1' + A().esc(x.unit) +
+        ' ' + Math.round(mk.kcal || 0) + ' kcal' +
+        (typeof mk.protein === 'number' ? '／P' + N.fmt(mk.protein) : '') +
+        (typeof mk.salt === 'number' ? '／塩' + N.fmt(mk.salt) + 'g' : '') + '</span></button>';
     }
     if (kind === 'seibun') {
       return '<button class="res" data-pick="' + A().esc(x.id) + '" data-kind="seibun">' +
@@ -970,6 +989,10 @@
             toAmount(pick);
           });
         });
+      } else if (kind === 'menu') {
+        var m = F.menuAt(parseInt(id, 10));
+        if (!m) { A().toast('このメニューを開けませんでした'); return; }
+        toAmount(fromMenu(m));
       } else if (kind === 'seibun') {
         F.byId(id).then(function (f) {
           if (!f) { A().toast('この食材を開けませんでした'); return; }
@@ -1008,6 +1031,18 @@
       ref: { type: 'seibun', id: f.id }, note: F.groupName(f.g)
     };
   }
+  /* 外食チェーンのメニュー1品。値は1食ぶん。
+     記録名に店名を入れておくと、あとで一覧を見たときにどこの何か分かる */
+  function fromMenu(m) {
+    return {
+      name: m.shop + ' ' + m.name, basis: 'serving', per: m.nut,
+      unit: m.unit || '食', defaultAmount: 1,
+      ref: { type: 'menu', id: m.shop + '|' + m.name },
+      note: m.shop + (m.note ? ' ・ ' + m.note : '') + ' ・ 公表値',
+      brand: m.shop
+    };
+  }
+
   function fromMyFood(m) {
     // 100g基準ならマスタの1g値を100倍する。既知カロリーと大きく違う
     // 商品サイズでは、Foods.mergeProduct が比率補正または安全側の拒否を行う。
@@ -1668,17 +1703,48 @@
           openAmount(state, slot, fromMyFood(my));
           return;
         }
-        // (2) 未登録: Web検索で商品情報を仮表示 -> 編集して保存
-        A().toast('商品情報を検索中…');
-        return global.Barcode.lookup(code).then(function (p) {
-          if (p && (p.name || p.hasNutrition)) {
-            openLookupResult(state, slot, code, p);
-          } else {
-            openBarcodeUnknown(state, slot, code);
+        /* (2) 登録はしていないが、前に調べたことがある商品。
+           端末内の控えから出すので、電波が無くても読める */
+        return S.Products.get(code).then(function (saved) {
+          if (saved) {
+            A().toast('前に読み取った商品情報を使います');
+            openLookupResult(state, slot, code, saved);
+            return null;
           }
+          // (3) アプリに同梱した商品データ(日本の商品4,565件)。ここも圏外で引ける
+          return F.offByBarcode(code).then(function (hit) {
+            if (hit) {
+              var p = offToPick(hit);
+              S.Products.put(p);
+              A().toast('商品データから読み込みました');
+              openLookupResult(state, slot, code, p);
+              return null;
+            }
+            // (4) 初めての商品: Web検索で仮表示 -> 編集して保存。結果は控えに残す
+            A().toast('商品情報を検索中…');
+            return global.Barcode.lookup(code).then(function (p2) {
+              if (p2 && (p2.name || p2.hasNutrition)) {
+                S.Products.put(p2);
+                openLookupResult(state, slot, code, p2);
+              } else {
+                openBarcodeUnknown(state, slot, code);
+              }
+            });
+          });
         });
       });
     });
+  }
+
+  /* 同梱の商品データの1行を、バーコード読み取り結果と同じ形にそろえる */
+  function offToPick(hit) {
+    var per = hit.per100 || {};
+    return {
+      code: hit.code, name: hit.name, brand: hit.brand || '',
+      quantity: hit.qty || '', servingSize: hit.serving || '',
+      per100: per, hasNutrition: typeof per.kcal === 'number',
+      warn: hit.warn || '', image: '', source: 'Open Food Facts（アプリ同梱）'
+    };
   }
 
   /* ---------------- 商品名でのWEB検索して取り込む ---------------- */
@@ -1836,6 +1902,11 @@
         ? '<div class="small">エネルギー ' + fv(n.kcal, 'kcal') + '／たんぱく質 ' + fv(n.protein, 'g') +
           '／脂質 ' + fv(n.fat, 'g') + '／炭水化物 ' + fv(n.carb, 'g') + '／食塩 ' + fv(n.salt, 'g') + '</div>'
         : '<div class="small muted">成分データは登録されていませんでした</div>') +
+      (p.warn === 'salt'
+        ? '<div class="date-warn" style="margin:8px 0 0">食塩相当量が 100gあたり ' +
+          A().esc(N.fmt(n.salt)) + 'g と登録されています。調味料でなければ、' +
+          '出典側の入力間違いの可能性が高いので、パッケージの表示を確かめてください。</div>'
+        : '') +
       '<div class="tiny muted" style="margin-top:8px">この情報は利用者投稿型のデータベースによるものです。' +
       'パッケージの表示と違う場合は次の画面で修正してください。</div></div>' +
       '<button class="btn wide" id="useIt">この内容を編集して登録</button>';
