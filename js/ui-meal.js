@@ -1378,20 +1378,27 @@
         '<label class="fld" id="servWrap"><span>単位の呼び方</span>' +
           '<input type="text" id="mServ" value="' + A().esc(preset.servingLabel || '個') + '" placeholder="個 / 袋 / 食"></label>' +
       '</div>' +
+      /* 読み取りは iPhone 本体の文字認識（標準カメラと同じもの）だけを使う。
+         入力欄を長押しして出る「テキストをスキャン」でカメラが開き、
+         読み取った文字がこの欄に直接入る。アプリ側から同じ機能を呼ぶ手段は無い */
       '<div class="card" id="ocrCard"><h3>栄養成分表示を読み取る</h3>' +
-        '<button class="btn wide" id="mCamera">📷 カメラで読み取る</button>' +
         '<ol class="scan-steps">' +
-          '<li>カメラで栄養成分表示を<b>まっすぐ大きく</b>写す</li>' +
-          '<li>写真の中の表を<b>長押しして文字を選ぶ</b>（iPhoneの文字認識）</li>' +
-          '<li><b>「コピー」</b>→「貼り付けて反映」で<b>下の各欄に入ります</b></li>' +
+          '<li>下の欄を<b>タップ</b>してから、もう一度<b>長押し</b>する</li>' +
+          '<li>メニューの<b>「テキストをスキャン」</b>を選ぶ（見えないときは「›」で次へ）</li>' +
+          '<li>栄養成分表示を枠に入れる。読み取れた文字がこの欄に入り、<b>下の各欄へ自動で反映</b>されます</li>' +
         '</ol>' +
-        '<div class="small muted" style="margin:-2px 2px 8px">' +
-        'iPhone標準の文字認識を使うので、これがいちばん正確です。' +
-        'アプリだけで自動的に読む方法も選べますが、光沢のある袋では崩れやすいです。</div>' +
-        '<details class="nut-more" id="ocrTextBox"><summary>読み取った文字（貼り付けもできます）</summary>' +
-          '<textarea id="mOcr" class="ocr-input" rows="6" ' +
-          'placeholder="栄養成分表示の文字を貼り付け"></textarea>' +
-          '<button class="btn line wide" id="mParse">各欄へ反映する</button></details>' +
+        '<textarea id="mOcr" class="ocr-input" rows="7" ' +
+        'placeholder="ここを長押し →「テキストをスキャン」"></textarea>' +
+        '<div class="row" style="gap:8px;margin-top:6px">' +
+          '<button class="btn line sm grow" id="mPaste">コピーした文字を貼り付け</button>' +
+          '<button class="btn line sm grow" id="mParse">各欄へ反映する</button>' +
+        '</div>' +
+        '<div class="small muted" style="margin:8px 2px 0">' +
+        'iPhoneの文字認識（標準カメラと同じもの）を使います。' +
+        'アプリから直接この機能を呼び出す方法が無いため、この欄を経由します。<br>' +
+        '<b>メニューに「テキストをスキャン」が出ないとき</b>は、標準カメラか写真アプリで' +
+        '文字を長押しして選び、コピーしてから「コピーした文字を貼り付け」を押してください。' +
+        '読み取りの精度は同じです。</div>' +
         '<div class="parse-result" id="mParseResult" role="status"></div></div>' +
       '<div class="card"><h3>栄養成分</h3>' +
         '<div class="nut-edit-grid">' + nutrientFields(EDIT_MAIN, preset, initialEstKeys) + '</div>' +
@@ -1513,19 +1520,24 @@
     });
     body.querySelector('#mParse').addEventListener('click', function () { applyOcr(false); });
 
-    var camera = body.querySelector('#mCamera');
-    if (camera) camera.addEventListener('click', function () {
-      if (!global.Ocr) { A().toast('読み取り機能を読み込めませんでした'); return; }
-      global.Ocr.capture().then(function (text) {
-        if (!text) return;
+    var paste = body.querySelector('#mPaste');
+    if (paste) paste.addEventListener('click', function () {
+      // 写真アプリで文字を選んでコピーしてきた場合の受け口
+      var nav = global.navigator;
+      if (!nav || !nav.clipboard || !nav.clipboard.readText) {
+        ocr.focus();
+        A().toast('この欄を長押しして「ペースト」を選んでください');
+        return;
+      }
+      nav.clipboard.readText().then(function (text) {
+        if (!text) { A().toast('コピーされた文字がありません'); return; }
         ocr.value = text;
         applyOcr(false);
-        // 読み取った文字は必ず見えるようにする。折りたたんだままだと、
-        // 認識できていても「読み取れない」としか分からず、原因も切り分けられない
-        var box = body.querySelector('#ocrTextBox');
-        if (box) box.open = true;
         var res = body.querySelector('#mParseResult');
         if (res) res.scrollIntoView({ block: 'center' });
+      }).catch(function () {
+        ocr.focus();
+        A().toast('この欄を長押しして「ペースト」を選んでください');
       });
     });
 
@@ -1536,12 +1548,10 @@
         if (card) card.scrollIntoView({ block: 'start' });
       }, 80);
     }
-    // カメラで読み取った文字を持って来ているときは、すぐ各欄へ入れる
+    // 読み取った文字を持って来ているときは、すぐ各欄へ入れる
     if (preset.ocrText) {
       ocr.value = preset.ocrText;
       applyOcr(false);
-      var ocrBox = body.querySelector('#ocrTextBox');
-      if (ocrBox) ocrBox.open = true;
     }
 
     var unlink = body.querySelector('#mUnlink');
@@ -1829,7 +1839,8 @@
       '一度登録すれば、次からはこのバーコードを読むだけで呼び出せます。</div></div>' +
       '<button class="btn wide" id="bScanText">📷 パッケージの栄養成分表示を読み取る</button>' +
       '<div class="tiny muted" style="margin:7px 2px 12px">' +
-      '読み取り欄を長押し →「テキストをスキャン」でカメラが開き、写した数値がそのまま各欄に入ります</div>' +
+      '読み取り欄が開きます。その欄を長押し →「テキストをスキャン」でカメラが開き、' +
+      '写した数値がそのまま各欄に入ります</div>' +
       '<button class="btn sub wide" id="bNew">数値を自分で入力して登録</button>' +
       '<div class="card" style="margin-top:12px"><h3>登録済みのマイ食品に紐づける</h3>' +
       '<input type="text" id="bq" placeholder="食品名で絞り込み" autocomplete="off">' +
@@ -1837,16 +1848,8 @@
     var body = A().openSheet('バーコードを登録', html);
 
     body.querySelector('#bScanText').addEventListener('click', function () {
-      // 手入力画面を挟まず、そのままカメラを開く。読み取れた文字を持って画面へ渡す
-      if (!global.Ocr) {
-        openManual(state, slot, { barcode: code, basis: 'serving', focusOcr: true });
-        return;
-      }
-      global.Ocr.capture().then(function (text) {
-        openManual(state, slot, {
-          barcode: code, basis: 'serving', focusOcr: true, ocrText: text || ''
-        });
-      });
+      // 読み取り欄のある画面を開く。撮影はiPhoneの「テキストをスキャン」に任せる
+      openManual(state, slot, { barcode: code, basis: 'serving', focusOcr: true });
     });
 
     body.querySelector('#bNew').addEventListener('click', function () {
