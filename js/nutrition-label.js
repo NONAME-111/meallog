@@ -135,10 +135,13 @@
   function portion(text) {
     var hundred = text.match(/(?:栄養成分表示\s*)?100\s*g\s*(?:当たり|あたり)/i);
     if (hundred) return { basis: '100g', servingLabel: '', grams: 100 };
-    // 内容量は「1袋(50g)当たり」「1袋50g当たり」のどちらの書き方もある
-    var m = text.match(/(?:栄養成分表示\s*)?(?:1\s*)?(日分|袋|本|個|食|パック|包|粒|錠|枚|杯|人前)\s*(?:[（(]?\s*([0-9]+(?:\.[0-9]+)?)\s*g\s*[）)]?)?\s*(?:当たり|あたり)/i);
+    /* 内容量は「1袋(50g)当たり」「1袋50g当たり」のどちらの書き方もある。
+       飲み物は「1本(200ml)当たり」のようにmLで書かれるので、そちらも受け取る。
+       ただし **mLは重さではない** ので、grams は空のままにする */
+    var m = text.match(/(?:栄養成分表示\s*)?(?:1\s*)?(日分|袋|本|缶|個|食|パック|包|粒|錠|枚|杯|人前)\s*(?:[（(]?\s*([0-9]+(?:\.[0-9]+)?)\s*(g|ml|cc)\s*[）)]?)?\s*(?:当たり|あたり)/i);
     if (!m) return { basis: null, servingLabel: null, grams: null };
-    return { basis: 'serving', servingLabel: m[1], grams: m[2] ? parseFloat(m[2]) : null };
+    var isGram = m[3] && m[3].toLowerCase() === 'g';
+    return { basis: 'serving', servingLabel: m[1], grams: isGram ? parseFloat(m[2]) : null };
   }
 
   function parse(text) {
