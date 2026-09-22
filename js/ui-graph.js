@@ -63,8 +63,8 @@
           return '<button' + (x.key === range ? ' class="on"' : '') + ' data-r="' + x.key + '">' +
             x.label + '</button>';
         }).join('') + '</div>' +
-        card('体重の推移', 'cWeight', weightSummary(body, st)) +
-        card('摂取カロリー', 'cKcal', kcalSummary(days, kcalByDay, tg)) +
+        card('体重の推移', 'cWeight', weightSummary(body, st), weightLegend(body, st)) +
+        card('摂取カロリー', 'cKcal', kcalSummary(days, kcalByDay, tg), kcalLegend()) +
         statsCard(days, perDay, body, kcalByDay, burnByDay, tg);
 
       view.querySelector('#rangeSeg').addEventListener('click', function (e) {
@@ -84,9 +84,10 @@
     });
   }
 
-  function card(title, canvasId, sub) {
+  function card(title, canvasId, sub, legend) {
     return '<div class="card"><h3>' + title + '</h3>' +
       (sub ? '<div class="small muted chart-sub" style="margin:-4px 0 8px">' + sub + '</div>' : '') +
+      (legend || '') +
       '<div class="chart-wrap"><canvas class="chart" id="' + canvasId + '"></canvas></div></div>';
   }
 
@@ -95,18 +96,56 @@
     if (!ws.length) return '記録がありません';
     var first = ws[0].weight, last = ws[ws.length - 1].weight;
     var diff = last - first;
-    // 最新の体重がいちばん見たい数字なので大きく出す
+    /* 最新の体重と期間内の増減がいちばん見たい数字なので、どちらも大きく出す。
+       増減は符号(+/−)で分かるようにしたうえで、色も添える(色だけに頼らない) */
+    var cls = diff > 0 ? 'up' : (diff < 0 ? 'down' : '');
     var s = '<span class="w-now">最新 <b>' + N.fmt(last) + '</b> kg</span>' +
-      '<span class="w-sub">期間内 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg';
-    if (st.goalWeight) s += ' ／ 目標 ' + N.fmt(st.goalWeight) + ' kg';
-    return s + '</span>';
+      '<span class="w-now ' + cls + '">期間内 <b>' +
+      (diff > 0 ? '+' : (diff < 0 ? '−' : '')) + N.fmt(Math.abs(diff)) + '</b> kg</span>';
+    if (st.goalWeight) s += '<span class="w-sub">目標 ' + N.fmt(st.goalWeight) + ' kg</span>';
+    return s;
   }
 
   function kcalSummary(days, kcalByDay, tg) {
     var vals = days.map(function (d) { return kcalByDay[d] || 0; }).filter(function (v) { return v > 0; });
     if (!vals.length) return '記録がありません';
-    var avg = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
-    return '記録した ' + vals.length + ' 日の平均 ' + Math.round(avg) + ' kcal ／ 目標 ' + tg.kcal.goal + ' kcal';
+    var avg = Math.round(vals.reduce(function (a, b) { return a + b; }, 0) / vals.length);
+    var over = avg - tg.kcal.goal;
+    return '<span class="w-now">平均 <b>' + avg + '</b> kcal</span>' +
+      '<span class="w-now ' + (over > 0 ? 'up' : 'down') + '">目標比 <b>' +
+      (over > 0 ? '+' : '−') + Math.abs(over) + '</b> kcal</span>' +
+      '<span class="w-sub">記録した ' + vals.length + ' 日 ／ 目標 ' + tg.kcal.goal + ' kcal</span>';
+  }
+
+  /* 凡例。Canvasの中に描くと図が狭くなり、拡大表示でも崩れるのでHTMLで出す */
+  function legendRow(items) {
+    return '<div class="chart-legend">' + items.map(function (x) {
+      // 線で示すもの(破線・点線)は枠線の色、塗りで示すものは背景の色
+      var style = x.color
+        ? (x.cls ? 'border-top-color:' + x.color : 'background:' + x.color)
+        : '';
+      return '<span><i class="' + (x.cls || '') + '"' +
+        (style ? ' style="' + style + '"' : '') + '></i>' + x.label + '</span>';
+    }).join('') + '</div>';
+  }
+
+  function weightLegend(body, st) {
+    if (!body.some(function (x) { return x.weight; })) return '';
+    var items = [{ color: 'var(--chart-weight)', label: '体重（左の目盛）' }];
+    if (body.filter(function (x) { return x.bodyFat; }).length > 1) {
+      items.push({ cls: 'lg-dashed', color: 'var(--chart-fat)', label: '体脂肪率（右の目盛）' });
+    }
+    if (st.goalWeight) items.push({ cls: 'lg-dotted', color: 'var(--chart-goal)', label: '目標体重' });
+    return legendRow(items);
+  }
+
+  function kcalLegend() {
+    return legendRow([
+      { color: 'var(--chart-weight)', label: '目標内' },
+      { color: 'var(--chart-goal)', label: '目標超過' },
+      { color: 'var(--chart-fat)', label: '運動で消費' },
+      { cls: 'lg-dotted', color: 'var(--tx2)', label: '目標' }
+    ]);
   }
 
   /* ---------------- 統計 ---------------- */
@@ -258,12 +297,7 @@
       });
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = css('--chart-fat', '#cc79a7');
-      ctx.font = '10px -apple-system,sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText('- - 体脂肪率(右目盛)', g.x0 + 2, g.y0 + 2);
-      ctx.fillStyle = css('--chart-weight', '#009e73');
-      ctx.fillText('― 体重(左目盛)', g.x0 + 2, g.y0 + 14);
+      // 凡例はカードの見出しの下にHTMLで出しているので、図の中には描かない
       rightAxisLabels(ctx, g, fsc);
     }
   }
@@ -303,9 +337,14 @@
       ctx.fillRect(x - bw / 2, y, bw, g.y0 + g.hgt - y);
       var b = burnByDay[d] || 0;
       if (b > 0) {
-        ctx.fillStyle = css('--chart-fat', '#cc79a7');
+        /* 運動で消費したぶんは棒の下側に重ねる。そのままだと埋もれるので、
+           上辺にカード色の区切りを入れて、どこからが運動ぶんか分かるようにする */
         var bh = Math.min(g.y0 + g.hgt - y, (b / (sc.hi - sc.lo)) * g.hgt);
-        ctx.fillRect(x - bw / 2, g.y0 + g.hgt - bh, bw, bh);
+        var top = g.y0 + g.hgt - bh;
+        ctx.fillStyle = css('--chart-fat', '#cc79a7');
+        ctx.fillRect(x - bw / 2, top, bw, bh);
+        ctx.fillStyle = css('--card', '#ffffff');
+        ctx.fillRect(x - bw / 2, top, bw, Math.min(1.2, bh));
       }
     });
 
@@ -314,10 +353,7 @@
     ctx.strokeStyle = css('--tx2', '#4f5863');
     ctx.beginPath(); ctx.moveTo(g.x0, Y(goal)); ctx.lineTo(g.x0 + g.wid, Y(goal)); ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = css('--tx2', '#4f5863');
-    ctx.font = '10px -apple-system,sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-    ctx.fillText('目標 ' + goal, g.x0 + 2, Y(goal) - 2);
+    // 目標の数字は見出しの下と凡例に出ているので、図の中には描かない(棒に重なるため)
   }
 
   function empty(ctx, s) {

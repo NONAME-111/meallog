@@ -167,12 +167,25 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 .sum-note{margin-top:9px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.16);
   font-size:11px;line-height:1.5}
 
-/* グラフの見出し下。最新の体重を大きく出す */
-.chart-sub{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px}
-.chart-sub .w-now{font-size:13px;color:var(--tx2)}
+/* グラフの見出し下。いちばん見たい数字(最新の体重・期間内の増減・平均カロリー)を大きく出す */
+.chart-sub{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px}
+.chart-sub .w-now{font-size:12px;color:var(--tx2)}
 .chart-sub .w-now b{font-size:26px;font-weight:800;color:var(--tx);margin:0 3px;
   letter-spacing:-.01em;line-height:1.1}
+/* 増減は符号で分かるようにしたうえで、色も添える(色だけに頼らない) */
+.chart-sub .w-now.up b{font-size:22px;color:var(--judge-warn)}
+.chart-sub .w-now.down b{font-size:22px;color:var(--judge-ok)}
 .chart-sub .w-sub{font-size:12px;color:var(--tx3)}
+
+/* グラフの凡例。色と一緒に線の形(実線・破線・点線)も示す */
+.chart-legend{display:flex;flex-wrap:wrap;gap:3px 12px;margin:0 0 6px;
+  color:var(--tx2);font-size:11px}
+.chart-legend span{display:flex;align-items:center;gap:4px}
+.chart-legend i{display:inline-block;width:14px;height:11px;border-radius:3px;
+  border:1px solid rgba(127,140,155,.45)}
+.chart-legend i.lg-dashed,.chart-legend i.lg-dotted{height:0;border:0;border-radius:0;
+  border-top-width:3px;border-top-style:dashed;background:none !important}
+.chart-legend i.lg-dotted{border-top-style:dotted}
 
 /* 非公式の出典から取り込んだメニューの印。公式の公表値と見分けられるようにする */
 .tag-unofficial{display:inline-block;margin-left:5px;padding:0 5px;border-radius:999px;
