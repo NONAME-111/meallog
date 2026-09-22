@@ -1378,25 +1378,24 @@
         '<label class="fld" id="servWrap"><span>単位の呼び方</span>' +
           '<input type="text" id="mServ" value="' + A().esc(preset.servingLabel || '個') + '" placeholder="個 / 袋 / 食"></label>' +
       '</div>' +
-      /* 読み取りは iPhone 本体の文字認識にまかせる。
-         入力欄の長押しで出るメニューは実機では「ペースト」「自動入力」だけで、
-         「テキストをスキャン」は出ない(2026-09-23 実機確認)。メニューの中身はiOSが決めるもので、
-         Webページから項目を足す方法は無い。そこで「標準カメラでコピー → 貼り付け」を主役にする */
+      /* 読み取りは iPhone 本体の文字認識にまかせる。長押しの「テキストをスキャン」なら
+         カメラが画面下半分に開き、読んだ文字がこの欄に直接入る。アプリとカメラを行き来せずに済む。
+         コピーして貼る道もあるが、行き来の分だけ遅いので逃げ道にとどめる */
       '<div class="card" id="ocrCard"><h3>栄養成分表示を読み取る</h3>' +
-        '<ol class="scan-steps">' +
-          '<li><b>iPhoneの標準カメラ</b>を栄養成分表示に向ける（撮影しなくてよい）</li>' +
-          '<li>画面に出る<b>文字認識のボタン</b>を押し、表をなぞって選んで<b>「コピー」</b></li>' +
-          '<li>このアプリに戻って、下の<b>「貼り付けて各欄へ反映」</b>を押す</li>' +
-        '</ol>' +
-        '<button class="btn wide" id="mPaste">📋 貼り付けて各欄へ反映</button>' +
-        '<details class="nut-more" id="ocrTextBox"><summary>読み取った文字（直接貼り付けも可）</summary>' +
-          '<textarea id="mOcr" class="ocr-input" rows="6" ' +
-          'placeholder="ここに文字を貼り付けても反映されます"></textarea>' +
-          '<button class="btn line wide" id="mParse">各欄へ反映する</button></details>' +
-        '<div class="small muted" style="margin:8px 2px 0">' +
-        '写真アプリに残っている写真からでも、文字を長押しして選べば同じようにコピーできます。<br>' +
-        '※入力欄を長押ししても「テキストをスキャン」は出ません' +
-        '（このメニューの中身はiOSが決めていて、アプリからは増やせません）。</div>' +
+        '<div class="small" style="margin:0 2px 7px">' +
+        '下の欄を<b>長押し</b>して、メニューの<b>「テキストをスキャン」</b>を押すとカメラが起動します。' +
+        '読み取った文字は<b>そのまま下の各欄に入ります</b>。</div>' +
+        '<textarea id="mOcr" class="ocr-input" rows="7" ' +
+        'placeholder="ここを長押し →「テキストをスキャン」"></textarea>' +
+        '<details class="nut-more" id="ocrTextBox">' +
+          '<summary>「テキストをスキャン」が出ないとき</summary>' +
+          '<div class="small muted" style="margin:0 2px 7px">' +
+          '標準カメラか写真アプリで文字を選んで「コピー」し、下のボタンを押してください。' +
+          '読み取りの精度は同じです。</div>' +
+          '<div class="row" style="gap:8px">' +
+            '<button class="btn line sm grow" id="mPaste">コピーした文字を貼り付け</button>' +
+            '<button class="btn line sm grow" id="mParse">各欄へ反映する</button>' +
+          '</div></details>' +
         '<div class="parse-result" id="mParseResult" role="status"></div></div>' +
       '<div class="card"><h3>栄養成分</h3>' +
         '<div class="nut-edit-grid">' + nutrientFields(EDIT_MAIN, preset, initialEstKeys) + '</div>' +
@@ -1520,32 +1519,24 @@
 
     var paste = body.querySelector('#mPaste');
     if (paste) paste.addEventListener('click', function () {
-      /* 標準カメラや写真アプリでコピーしてきた文字を受け取る。
-         読み取れなかったときは、手で貼れるように欄を開いて知らせる */
-      var openBox = function (msg) {
-        var box = body.querySelector('#ocrTextBox');
-        if (box) box.open = true;
-        ocr.focus();
-        A().toast(msg);
-      };
+      // 写真の文字をコピーしてきた場合の逃げ道。取れないときは手で貼れるように欄へ案内する
+      var manual = function (msg) { ocr.focus(); A().toast(msg); };
       var nav = global.navigator;
       if (!nav || !nav.clipboard || !nav.clipboard.readText) {
-        openBox('下の欄を長押しして「ペースト」を選んでください');
+        manual('読み取り欄を長押しして「ペースト」を選んでください');
         return;
       }
       nav.clipboard.readText().then(function (text) {
         if (!text || !text.trim()) {
-          openBox('コピーされた文字がありません。先に標準カメラで文字をコピーしてください');
+          manual('コピーされた文字がありません。先に写真の文字を選んで「コピー」してください');
           return;
         }
         ocr.value = text;
-        var box = body.querySelector('#ocrTextBox');
-        if (box) box.open = true;
         applyOcr(false);
         var res = body.querySelector('#mParseResult');
         if (res) res.scrollIntoView({ block: 'center' });
       }).catch(function () {
-        openBox('下の欄を長押しして「ペースト」を選んでください');
+        manual('読み取り欄を長押しして「ペースト」を選んでください');
       });
     });
 
@@ -1560,8 +1551,6 @@
     if (preset.ocrText) {
       ocr.value = preset.ocrText;
       applyOcr(false);
-      var ocrBox = body.querySelector('#ocrTextBox');
-      if (ocrBox) ocrBox.open = true;
     }
 
     var unlink = body.querySelector('#mUnlink');
@@ -1849,8 +1838,8 @@
       '一度登録すれば、次からはこのバーコードを読むだけで呼び出せます。</div></div>' +
       '<button class="btn wide" id="bScanText">📷 パッケージの栄養成分表示を読み取る</button>' +
       '<div class="tiny muted" style="margin:7px 2px 12px">' +
-      '標準カメラで栄養成分表示の文字をコピーしてから、' +
-      'この画面の「貼り付けて各欄へ反映」を押すと、数値がそのまま各欄に入ります</div>' +
+      '読み取り欄が開きます。その欄を長押し →「テキストをスキャン」でカメラが起動し、' +
+      '写した数値がそのまま各欄に入ります</div>' +
       '<button class="btn sub wide" id="bNew">数値を自分で入力して登録</button>' +
       '<div class="card" style="margin-top:12px"><h3>登録済みのマイ食品に紐づける</h3>' +
       '<input type="text" id="bq" placeholder="食品名で絞り込み" autocomplete="off">' +
