@@ -13,6 +13,10 @@
      線を濃くすると3型色覚で通常食品の緑と重なる(#2e8fc7 で ΔE1.4)ので、この明るさを保つこと。
      枠の灰青は彩度が低く、内訳4色とは最小 ΔE14.4。食品の色とは混ざらない */
   --zone:#56b4e9; --zone-bg:#dceefb; --zone-edge:#5f6c78;
+  /* 体重グラフの3本。緑と青は3型色覚でΔE9.2しか離れておらず、
+     ダークでは緑が2.9:1しか出ていなかったので、内訳バーと同じ系統に変えた。
+     実測: 色覚4型の最小ΔE 11.0 / コントラスト ライト3.4・3.1・3.9、ダーク4.6・5.1・4.0 */
+  --chart-weight:#009e73; --chart-fat:#cc79a7; --chart-goal:#d55e00;
   --bg:#f4f5f7; --card:#fff; --line:#e3e6ea;
   --tx:#20242a; --tx2:#4f5863; --tx3:#66717d;
   --hdr:56px; --tabh:calc(54px + env(safe-area-inset-bottom));
@@ -162,6 +166,13 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:12px 0}
 /* カロリーしか登録が無い食品が混ざっていて、PFCに反映できないときの注記 */
 .sum-note{margin-top:9px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.16);
   font-size:11px;line-height:1.5}
+
+/* グラフの見出し下。最新の体重を大きく出す */
+.chart-sub{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px}
+.chart-sub .w-now{font-size:13px;color:var(--tx2)}
+.chart-sub .w-now b{font-size:26px;font-weight:800;color:var(--tx);margin:0 3px;
+  letter-spacing:-.01em;line-height:1.1}
+.chart-sub .w-sub{font-size:12px;color:var(--tx3)}
 
 /* 非公式の出典から取り込んだメニューの印。公式の公表値と見分けられるようにする */
 .tag-unofficial{display:inline-block;margin-left:5px;padding:0 5px;border-radius:999px;

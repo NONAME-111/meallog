@@ -71,7 +71,11 @@
         var b = e.target.closest('[data-r]');
         if (!b) return;
         range = parseInt(b.dataset.r, 10);
-        S.Settings.save({ graphRange: range }).then(function () { return A().reloadSettings(); });
+        /* 先に画面側の設定も書き換えてから描き直す。
+           保存の完了を待たずに描き直すと、描き直しの中で前回の期間を読み戻してしまい、
+           1回目のタップが効かないように見えていた */
+        if (A().state.settings) A().state.settings.graphRange = range;
+        S.Settings.save({ graphRange: range });
         A().render();
       });
 
@@ -82,7 +86,7 @@
 
   function card(title, canvasId, sub) {
     return '<div class="card"><h3>' + title + '</h3>' +
-      (sub ? '<div class="small muted" style="margin:-4px 0 8px">' + sub + '</div>' : '') +
+      (sub ? '<div class="small muted chart-sub" style="margin:-4px 0 8px">' + sub + '</div>' : '') +
       '<div class="chart-wrap"><canvas class="chart" id="' + canvasId + '"></canvas></div></div>';
   }
 
@@ -91,9 +95,11 @@
     if (!ws.length) return '記録がありません';
     var first = ws[0].weight, last = ws[ws.length - 1].weight;
     var diff = last - first;
-    var s = '最新 ' + N.fmt(last) + ' kg ／ 期間内 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg';
+    // 最新の体重がいちばん見たい数字なので大きく出す
+    var s = '<span class="w-now">最新 <b>' + N.fmt(last) + '</b> kg</span>' +
+      '<span class="w-sub">期間内 ' + (diff > 0 ? '+' : '') + N.fmt(diff) + ' kg';
     if (st.goalWeight) s += ' ／ 目標 ' + N.fmt(st.goalWeight) + ' kg';
-    return s;
+    return s + '</span>';
   }
 
   function kcalSummary(days, kcalByDay, tg) {
@@ -218,21 +224,22 @@
 
     if (st.goalWeight && st.goalWeight >= sc.lo && st.goalWeight <= sc.hi) {
       ctx.save();
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = css('--orange', '#f0902b');
+      ctx.setLineDash([2, 4]);
+      ctx.strokeStyle = css('--chart-goal', '#d55e00');
       ctx.beginPath(); ctx.moveTo(g.x0, Y(st.goalWeight)); ctx.lineTo(g.x0 + g.wid, Y(st.goalWeight));
       ctx.stroke(); ctx.restore();
     }
 
-    ctx.strokeStyle = css('--green', '#3aa76d');
-    ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    // 体重は実線・太め。体脂肪率は破線、目標は点線。色だけに頼らず形でも分ける
+    ctx.strokeStyle = css('--chart-weight', '#009e73');
+    ctx.lineWidth = 2.4; ctx.lineJoin = 'round';
     ctx.beginPath();
     pts.forEach(function (p, k) {
       var x = X(p.i), y = Y(p.w);
       if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
-    ctx.fillStyle = css('--green', '#3aa76d');
+    ctx.fillStyle = css('--chart-weight', '#009e73');
     pts.forEach(function (p) {
       ctx.beginPath(); ctx.arc(X(p.i), Y(p.w), 2.6, 0, Math.PI * 2); ctx.fill();
     });
@@ -240,9 +247,9 @@
     if (fpts.length > 1) {
       var fvals = fpts.map(function (p) { return p.f; });
       var fsc = niceScale(Math.min.apply(null, fvals), Math.max.apply(null, fvals));
-      ctx.strokeStyle = css('--blue', '#3d7fd6');
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = css('--chart-fat', '#cc79a7');
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([6, 3]);
       ctx.beginPath();
       fpts.forEach(function (p, k) {
         var x = X(p.i);
@@ -251,17 +258,19 @@
       });
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = css('--blue', '#3d7fd6');
+      ctx.fillStyle = css('--chart-fat', '#cc79a7');
       ctx.font = '10px -apple-system,sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText('― 体脂肪率(右目盛)', g.x0 + 2, g.y0 + 2);
+      ctx.fillText('- - 体脂肪率(右目盛)', g.x0 + 2, g.y0 + 2);
+      ctx.fillStyle = css('--chart-weight', '#009e73');
+      ctx.fillText('― 体重(左目盛)', g.x0 + 2, g.y0 + 14);
       rightAxisLabels(ctx, g, fsc);
     }
   }
 
   function rightAxisLabels(ctx, g, sc) {
     ctx.save();
-    ctx.fillStyle = css('--blue', '#3d7fd6');
+    ctx.fillStyle = css('--chart-fat', '#cc79a7');
     ctx.font = '10px -apple-system,sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     for (var v = sc.lo; v <= sc.hi + 1e-9; v += sc.step) {
@@ -289,22 +298,23 @@
       if (!v) return;
       var x = g.x0 + (days.length === 1 ? g.wid / 2 : (i / (days.length - 1)) * g.wid);
       var y = Y(v);
-      ctx.fillStyle = (v > goal) ? css('--orange', '#f0902b') : css('--green', '#3aa76d');
+      // 目標内/超過/運動は、内訳バーと同じ検証済みの3色(最小ΔE10.4)を使う
+      ctx.fillStyle = (v > goal) ? css('--chart-goal', '#d55e00') : css('--chart-weight', '#009e73');
       ctx.fillRect(x - bw / 2, y, bw, g.y0 + g.hgt - y);
       var b = burnByDay[d] || 0;
       if (b > 0) {
-        ctx.fillStyle = css('--blue', '#3d7fd6');
+        ctx.fillStyle = css('--chart-fat', '#cc79a7');
         var bh = Math.min(g.y0 + g.hgt - y, (b / (sc.hi - sc.lo)) * g.hgt);
         ctx.fillRect(x - bw / 2, g.y0 + g.hgt - bh, bw, bh);
       }
     });
 
     ctx.save();
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = css('--red', '#e0503f');
+    ctx.setLineDash([2, 4]);
+    ctx.strokeStyle = css('--tx2', '#4f5863');
     ctx.beginPath(); ctx.moveTo(g.x0, Y(goal)); ctx.lineTo(g.x0 + g.wid, Y(goal)); ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = css('--red', '#e0503f');
+    ctx.fillStyle = css('--tx2', '#4f5863');
     ctx.font = '10px -apple-system,sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
     ctx.fillText('目標 ' + goal, g.x0 + 2, Y(goal) - 2);
