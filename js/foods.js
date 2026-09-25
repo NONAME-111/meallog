@@ -380,8 +380,8 @@
       return fetch(url).then(function (r) { return r.ok ? r.json() : blank; })
         .catch(function () { return blank; });
     };
-    /* 公式の公表値(menu-items.json)と、非公式の出典(FatSecret)を合わせて読む。
-       非公式は official:false を立て、画面で必ず「非公式」と分かるようにする。
+    /* 公式の公表値(menu-items.json)と、非公式の出典(FatSecret・個人サイト)を合わせて読む。
+       非公式は official:false を立て、画面で必ず「非公式」と出典が分かるようにする。
        先読みするのは公式のぶんだけ(非公式は266KBあるので、検索したときに読む) */
     menuLoading = Promise.all([
       get('data/menu-items.json'),
@@ -399,6 +399,7 @@
         list.push({
           i: list.length, shop: row[0], name: row[1], unit: '食',
           nut: row[3] || {}, note: row[2] || '', official: false,
+          src: row[4] || 'FatSecret・利用者投稿',
           key: norm(row[0] + ' ' + row[1])
         });
       });
@@ -414,11 +415,14 @@
 
   function menuSearch(text, limit) {
     return loadMenu().then(function (db) {
-      var q = norm(text || '');
-      if (!q) return [];
+      /* 空白で区切った語を「すべて含む」品を探す。「ガスト ハンバーグ」を
+         続きの文字列として探すと、名前がハンバーグで始まる品しか出ない */
+      var terms = String(text || '').split(/[\s　]+/).map(norm).filter(Boolean);
+      if (!terms.length) return [];
       var hit = [];
       for (var i = 0; i < db.list.length && hit.length < (limit || 12) * 3; i++) {
-        if (db.list[i].key.indexOf(q) !== -1) hit.push(db.list[i]);
+        var key = db.list[i].key;
+        if (terms.every(function (t) { return key.indexOf(t) !== -1; })) hit.push(db.list[i]);
       }
       // 公式の公表値を先に出す
       hit.sort(function (a, b) { return (b.official ? 1 : 0) - (a.official ? 1 : 0); });

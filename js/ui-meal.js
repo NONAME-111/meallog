@@ -742,7 +742,10 @@
       var mk = x.nut || {};
       return '<button class="res" data-pick="' + x.i + '" data-kind="menu">' +
         '<b>' + A().esc(x.name) + (x.official ? '' : '<i class="tag-unofficial">非公式</i>') + '</b>' +
-        '<span>' + A().esc(x.shop) + ' ・ ' + A().esc(x.note || ('1' + x.unit)) +
+        // 非公式は出典のサイト名も出す(同じ店に出典が2つあることがある。ガストなど)
+        '<span>' + A().esc(x.shop) +
+        (x.official ? '' : ' ・ ' + A().esc(String(x.src || '').split('・')[0])) +
+        ' ・ ' + A().esc(x.note || ('1' + x.unit)) +
         ' ' + Math.round(mk.kcal || 0) + ' kcal' +
         (typeof mk.protein === 'number' ? '／P' + N.fmt(mk.protein) : '') +
         (typeof mk.salt === 'number' ? '／塩' + N.fmt(mk.salt) + 'g' : '') + '</span></button>';
@@ -1042,7 +1045,8 @@
       unit: m.unit || '食', defaultAmount: 1,
       ref: { type: 'menu', id: m.shop + '|' + m.name },
       note: m.shop + (m.note ? ' ・ ' + m.note : '') +
-        (m.official ? ' ・ 店の公表値' : ' ・ 非公式(利用者投稿のデータベース。店頭表示と違うことがあります)'),
+        (m.official ? ' ・ 店の公表値'
+          : ' ・ 非公式(' + (m.src || 'FatSecret・利用者投稿') + '。店頭表示と違うことがあります)'),
       brand: m.shop
     };
   }
