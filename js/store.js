@@ -683,6 +683,7 @@
     toiletMigrated: 0,
     exerciseGoal322Migrated: 0, // 旧既定値200kcalを322kcalへ移した版
     chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
+    fruitEstimateMigrated: 0,     // 記録済みの果物(カロリーだけ)に成分表の値を補った版(v42)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -839,6 +840,75 @@
     });
   }
 
+  /*
+     果物の規則(byKcal)を入れる前(v41まで)に記録した果物は、カロリーしか持たず
+     ビタミンCなどが空だった(あすけんから移したゼスプリ サンゴールドなど)。
+     一度だけ、果物の記録に成分表の値を補う。実測・手入力の値とkcalは上書きしない
+     (Estimate.fillFruit は欠けている項目だけを足す)。過去日のうち、あすけんの日次集計が
+     ある日は、取り込んだ記録の栄養素を合計に使わないので二重には数えない(dayTotals)。
+  */
+  function migrateFruitEstimate() {
+    return Settings.get().then(function (st) {
+      if (st.fruitEstimateMigrated) {
+        return { entries: 0, myfoods: 0, combos: 0, changed: 0, skipped: true };
+      }
+      var estimator = global.Estimate;
+      if (!estimator || !estimator.fillFruit) {
+        return Promise.reject(new Error('果物の補完処理を読み込めませんでした'));
+      }
+      return Promise.all([
+        estimator.load(), allEntries(), MyFoods.all(), Combos.all()
+      ]).then(function (r) {
+        var entries = (r[1] || []).filter(notSkip), myfoods = r[2] || [], combos = r[3] || [];
+        var entryJobs = entries.filter(estimator.needsFruitFill).map(function (rec) {
+          return estimator.fillFruit(rec, { unit: rec.unit || 'g', amount: rec.amount || 1 });
+        });
+        var foodJobs = myfoods.filter(estimator.needsFruitFill).map(function (rec) {
+          return estimator.fillFruit(rec, {
+            unit: rec.basis === 'serving' ? (rec.servingLabel || '食') : 'g',
+            amount: rec.basis === 'serving' ? 1 : 100
+          });
+        });
+        var comboJobs = combos.filter(function (combo) {
+          return (combo.items || []).some(estimator.needsFruitFill);
+        }).map(function (combo) {
+          var items = combo.items || [];
+          return Promise.all(items.map(function (item) {
+            return estimator.fillFruit(item, { unit: item.unit || 'g', amount: item.amount || 1 });
+          })).then(function (nextItems) {
+            if (!nextItems.some(Boolean)) return null;
+            var next = {};
+            for (var key in combo) next[key] = combo[key];
+            next.items = items.map(function (item, i) { return nextItems[i] || item; });
+            return next;
+          });
+        });
+        return Promise.all([
+          Promise.all(entryJobs), Promise.all(foodJobs), Promise.all(comboJobs)
+        ]);
+      }).then(function (groups) {
+        var changedEntries = groups[0].filter(Boolean);
+        var changedFoods = groups[1].filter(Boolean);
+        var changedCombos = groups[2].filter(Boolean);
+        invalidate();
+        return run(['entries', 'myfoods', 'combos', 'settings'], 'readwrite', function (stores) {
+          changedEntries.forEach(function (rec) { stores[0].put(rec); });
+          changedFoods.forEach(function (rec) { stores[1].put(rec); });
+          changedCombos.forEach(function (rec) { stores[2].put(rec); });
+          st.fruitEstimateMigrated = 1;
+          stores[3].put({ k: 'main', v: st });
+          return true;
+        }).then(function () {
+          return {
+            entries: changedEntries.length, myfoods: changedFoods.length,
+            combos: changedCombos.length,
+            changed: changedEntries.length + changedFoods.length + changedCombos.length
+          };
+        });
+      });
+    });
+  }
+
   /* ---------------- 全データ書き出し/取り込み ---------------- */
   function exportAll() {
     return Promise.all([
@@ -897,6 +967,7 @@
     exportAll: exportAll, importAll: importAll, wipeAll: wipeAll,
     migrateToilet: migrateToilet, migrateExerciseGoal: migrateExerciseGoal,
     migrateChickenLiver: migrateChickenLiver,
+    migrateFruitEstimate: migrateFruitEstimate,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

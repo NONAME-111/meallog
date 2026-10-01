@@ -18,10 +18,14 @@
     'vitb1', 'vitb2', 'niacin', 'vitb6', 'vitb12', 'folate', 'vitc'];
   var REF_ESTIMATE_KEYS = ['fiber', 'satfat', 'monofat', 'polyfat', 'n3', 'n6'].concat(MICRO);
 
-  /* 名前が検索語に当たるか。かなだけで入力されたときは漢字を読み下して照合する。 */
-  function nameHit(name, q, kana) {
+  /* 名前が検索語に当たるか。かなだけで入力されたときは漢字を読み下して照合する。
+     qs は Foods.queryVariants の結果(検索語と、その言い換え)。
+     「キウイ」で「ゼスプリ サンゴールド」、「林檎」で「りんご」の記録も出す */
+  function nameHit(name, qs) {
     var n = F.norm(name);
-    return n.indexOf(q) !== -1 || (kana && F.kanaContains(n, q));
+    return qs.some(function (q) {
+      return n.indexOf(q) !== -1 || (F.isKanaQuery(q) && F.kanaContains(n, q));
+    });
   }
 
   /* ---------------- 一覧描画 ---------------- */
@@ -525,8 +529,7 @@
 
     /* ---- 横断検索(検索欄に文字があるとき) ---- */
     function searchAll(text) {
-      var n = F.norm(text);
-      var kana = F.isKanaQuery(n);
+      var qs = F.queryVariants(text);
       return Promise.all([
         F.searchCommon(text, { limit: 24 }),
         usedList(),
@@ -536,13 +539,13 @@
         F.menuSearch(text, 12)
       ]).then(function (r) {
         var commons = r[0];
-        var used = r[1].filter(function (x) { return nameHit(x.name, n, kana); }).slice(0, 12);
+        var used = r[1].filter(function (x) { return nameHit(x.name, qs); }).slice(0, 12);
         var usedNames = {};
         used.forEach(function (x) { usedNames[x.name] = 1; });
         var hist = r[2].filter(function (x) {
-          return nameHit(x.name, n, kana) && !usedNames[x.name];
+          return nameHit(x.name, qs) && !usedNames[x.name];
         }).slice(0, 20);
-        var combos = r[3].filter(function (x) { return nameHit(x.name, n, kana); });
+        var combos = r[3].filter(function (x) { return nameHit(x.name, qs); });
         // 友好名で出したものと同じ食品番号は、生の成分表側からは省く
         var shown = {};
         commons.forEach(function (c) { shown[c.id] = 1; });
@@ -957,9 +960,8 @@
         S.Entries.topUsed(400),
         F.search(text, { limit: 20 })
       ]).then(function (r) {
-        var n = F.norm(text);
-        var kana = F.isKanaQuery(n);
-        var used = r[1].filter(function (x) { return nameHit(x.name, n, kana); }).slice(0, 10);
+        var qs = F.queryVariants(text);
+        var used = r[1].filter(function (x) { return nameHit(x.name, qs); }).slice(0, 10);
         var shown = {};
         r[0].forEach(function (c) { shown[c.id] = 1; });
         var seibun = r[2].filter(function (f) { return !shown[f.id]; }).slice(0, 14);

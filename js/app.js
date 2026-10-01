@@ -253,7 +253,7 @@
       render();
     });
 
-    var liverMigration = null;
+    var liverMigration = null, fruitMigration = null;
     S.migrateToilet().then(function () {
       return S.migrateExerciseGoal();
     }).then(function () {
@@ -261,6 +261,10 @@
       return S.migrateChickenLiver().catch(function () { return null; });
     }).then(function (result) {
       liverMigration = result;
+      // 記録済みの果物にビタミンなどを補う(一度だけ)。成分表を読めない場合は次回また試す
+      return S.migrateFruitEstimate().catch(function () { return null; });
+    }).then(function (result) {
+      fruitMigration = result;
       return reloadSettings();
     }).then(function (st) {
       state.tab = st.lastTab || 'meal';
@@ -270,6 +274,9 @@
       render();
       if (liverMigration && liverMigration.changed) {
         toast('保存済みの鶏レバー ' + liverMigration.changed + '件を再較正しました', 4200);
+      }
+      if (fruitMigration && fruitMigration.changed) {
+        toast('果物の記録 ' + fruitMigration.changed + '件にビタミンなどを補いました', 4200);
       }
       global.Steps.receiveUrl().then(function (count) {
         if (count) { toast(count + '日分の歩数を取り込みました', 3500); render(); }

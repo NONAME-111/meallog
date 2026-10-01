@@ -105,6 +105,95 @@
     return s;
   }
 
+  /* ---- 検索語の言い換え ----
+     記録の名前は「ゼスプリ サンゴールド」のように品種名だけのことがあり、「キウイ」では出なかった。
+     成分表は「キウイフルーツ」「パインアップル」「かき 甘がき」「（なし類）」のような表記で、
+     普段の呼び方(キュウイ・パイナップル・柿・梨)でも出ない。
+     検索語にキーの語が入っていたら、値の語に置き換えた検索語でも探す(一番長いキーを1つだけ使う)。
+     「もも」「かき」「なし」のように、もも肉・かき揚げ・皮なし にも当たる語は言い換えに使わない */
+  var VARIANTS = {
+    'キウイ': ['サンゴールド', 'キウィ', 'キュウイ'],
+    'キウィ': ['キウイ', 'キュウイ', 'サンゴールド'],
+    'キュウイ': ['キウイ', 'キウィ', 'サンゴールド'],
+    'サンゴールド': ['ゴールドキウイ', 'キウイフルーツ黄肉種'],
+    'ゴールドキウイ': ['サンゴールド', 'キウイフルーツ黄肉種'],
+    'パイナップル': ['パインアップル', 'パイン'],
+    'パインアップル': ['パイナップル'],
+    'パイン': ['パイナップル'],
+    '林檎': ['りんご'],
+    '蜜柑': ['みかん'],
+    '桃': ['もも類'],
+    '白桃': ['もも白肉種'],
+    '黄桃': ['もも黄肉種'],
+    '柿': ['甘がき', '渋抜きがき'],
+    '干し柿': ['干しがき'],
+    '梨': ['なし類'],
+    '洋梨': ['西洋なし', 'ラフランス', '洋なし'],
+    '洋なし': ['西洋なし', 'ラフランス', '洋梨'],
+    'ラフランス': ['西洋なし', '洋梨', '洋なし'],
+    '葡萄': ['ぶどう'],
+    '巨峰': ['ぶどう'],
+    'ピオーネ': ['ぶどう'],
+    'デラウェア': ['ぶどう'],
+    'ぶどう': ['葡萄', '巨峰', 'ピオーネ', 'デラウェア'],
+    '苺': ['いちご'],
+    'あまおう': ['いちご'],
+    '西瓜': ['すいか'],
+    '枇杷': ['びわ'],
+    '無花果': ['いちじく'],
+    '柘榴': ['ざくろ'],
+    '杏': ['あんず'],
+    '金柑': ['きんかん'],
+    '八朔': ['はっさく'],
+    '伊予柑': ['いよかん'],
+    '文旦': ['ぶんたん'],
+    '日向夏': ['ひゅうがなつ'],
+    '甘夏': ['なつみかん'],
+    '夏みかん': ['なつみかん'],
+    'デコポン': ['しらぬひ', '不知火'],
+    '不知火': ['しらぬひ', 'デコポン'],
+    'チェリー': ['さくらんぼ'],
+    'アメリカンチェリー': ['さくらんぼ米国産'],
+    'グアバ': ['グァバ'],
+    'パパイヤ': ['パパイア']
+  };
+  var VARIANT_KEYS = null;
+
+  /* 検索語と、その言い換えを正規化して返す。先頭はいつも元の検索語 */
+  function queryVariants(text) {
+    var n = norm(String(text || '').trim());
+    if (!n) return [];
+    if (!VARIANT_KEYS) {
+      VARIANT_KEYS = Object.keys(VARIANTS).map(function (k) { return { k: k, n: norm(k) }; })
+        .sort(function (a, b) { return b.n.length - a.n.length; });
+    }
+    var out = [n];
+    for (var i = 0; i < VARIANT_KEYS.length; i++) {
+      var key = VARIANT_KEYS[i];
+      if (n.indexOf(key.n) === -1) continue;
+      VARIANTS[key.k].forEach(function (v) {
+        var alt = n.split(key.n).join(norm(v));
+        if (out.indexOf(alt) === -1) out.push(alt);
+      });
+      break;
+    }
+    return out;
+  }
+
+  /* 言い換えごとに探した結果を、元の検索語の結果を先にして1つにまとめる */
+  function mergeVariantResults(lists, keyOf, limit) {
+    var seen = {}, out = [];
+    lists.forEach(function (list) {
+      (list || []).forEach(function (x) {
+        var k = keyOf(x);
+        if (seen[k]) return;
+        seen[k] = 1;
+        out.push(x);
+      });
+    });
+    return out.slice(0, limit);
+  }
+
   function load() {
     if (DB) return Promise.resolve(DB);
     if (loading) return loading;
@@ -131,6 +220,17 @@
   function search(query, opts) {
     opts = opts || {};
     var limit = opts.limit || 60;
+    var variants = opts._variant ? [] : queryVariants(query);
+    if (variants.length > 1) {
+      var sub = {};
+      for (var o in opts) sub[o] = opts[o];
+      sub._variant = true;
+      return Promise.all(variants.map(function (v, i) {
+        return search(i === 0 ? query : v, sub);
+      })).then(function (lists) {
+        return mergeVariantResults(lists, function (f) { return f.id; }, limit);
+      });
+    }
     return load().then(function (db) {
       var raw = String(query || '').trim();
       if (!raw) return [];
@@ -547,6 +647,17 @@
     opts = opts || {};
     var raw = String(query || '').trim();
     if (!raw) return Promise.resolve([]);
+    var variants = opts._variant ? [] : queryVariants(raw);
+    if (variants.length > 1) {
+      var sub = {};
+      for (var o in opts) sub[o] = opts[o];
+      sub._variant = true;
+      return Promise.all(variants.map(function (v, i) {
+        return searchCommon(i === 0 ? raw : v, sub);
+      })).then(function (lists) {
+        return mergeVariantResults(lists, function (it) { return it.key; }, opts.limit || 24);
+      });
+    }
     var q = norm(raw);
     return commonIndex().then(function (data) {
       var kana = isKanaQuery(q);
@@ -577,6 +688,7 @@
     load: load, loadCommon: loadCommon, search: search, byId: byId, scale: scale, sum: sum,
     searchCommon: searchCommon, commonById: commonById,
     loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
+    queryVariants: queryVariants,
     loadProducts: loadProducts, productFor: productFor, mergeProduct: mergeProduct,
     loadOff: loadOff, offByBarcode: offByBarcode, offSearch: offSearch, offReady: offReady,
     loadMenu: loadMenu, menuSearch: menuSearch, menuAt: menuAt,

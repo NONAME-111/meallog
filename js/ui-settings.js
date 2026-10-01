@@ -315,6 +315,11 @@
       }).then(function () {
         return S.migrateChickenLiver().catch(function () { return null; });
       }).then(function () {
+        // 古いバックアップの果物(カロリーだけ)にも、取り込んだその場で成分表の値を補う
+        return S.Settings.save({ fruitEstimateMigrated: 0 }).then(function () {
+          return S.migrateFruitEstimate().catch(function () { return null; });
+        });
+      }).then(function () {
         return A().reloadSettings();
       }).then(function () {
         A().toast('取り込みました'); A().render();

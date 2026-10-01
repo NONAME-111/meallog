@@ -147,6 +147,19 @@
     return null;
   }
 
+  /* 生の果物のように、名前で食品そのものが決まり成分もほぼ一定のもの(規則に byKcal)は、
+     カロリーから重さを逆算してよい。あすけんから移した記録はカロリーしか持たず、
+     ゼスプリ サンゴールドもバナナもビタミンCが空のままだった(2026-10-02 利用者報告)。
+     容量の書いてある名前(350ml など)は飲み物なので使わない。果汁入りのお酒やジュースを
+     生の果物の重さに換算すると、ビタミンCなどが何倍にもつく */
+  function kcalGrams(rule, known, ref, name) {
+    if (!rule || !rule.byKcal || !ref || !finite(known.kcal) || known.kcal <= 0) return null;
+    if (!finite(ref.kcal) || ref.kcal <= 0) return null;
+    if (/[0-9](?:ml|l|ℓ)(?![a-z])/.test(F.norm(name))) return null;
+    var grams = known.kcal * 100 / ref.kcal;
+    return (grams >= 1 && grams <= 1500) ? grams : null;
+  }
+
   // 主食を含む料理は単一食材へ置き換えず、成分表の複数食材モデルで補う。
   function recipeNutrients(rule, model) {
     if (!Array.isArray(rule.recipe) || !rule.recipe.length) return null;
@@ -261,7 +274,9 @@
          ただし、重さまで決まっている規則(recipe / grams付きの辞書)は根拠があるので使う。 */
       var macrosKnown = MACROS.filter(function (k) { return finite(out[k]); }).length;
       if (macrosKnown < 2) {
-        var pinned = rule && (rule.recipe || (rule.ref && ruleGrams(rule, opts) != null));
+        var pinFood = rule && rule.ref ? model.byId[rule.ref] : null;
+        var pinned = rule && (rule.recipe || (pinFood && (ruleGrams(rule, opts) != null ||
+          kcalGrams(rule, out, pinFood, name) != null)));
         if (!pinned) return null;
       }
 
@@ -284,11 +299,18 @@
            (実測: 肉類の鉄4.8倍・ビタミンA4.1倍、菓子のカリウム4.4倍)。
            重さが決まっている規則(grams)はそのまま使ってよい */
         var knownMacros = MACROS.filter(function (k) { return finite(out[k]); }).length;
+        var method = 'dictionary', conf = 'high';
         if (grams == null && knownMacros >= 2) grams = fitGrams(out, model.byId[rule.ref]);
+        /* PFCが分かっていて代表食品と合わないもの(果物味の加工品など)は、カロリーで伸ばさない。
+           カロリーしか分からない生の果物だけ、カロリーから重さを逆算する */
+        if (grams == null && knownMacros < 2) {
+          grams = kcalGrams(rule, out, model.byId[rule.ref], name);
+          if (grams != null) { method = 'dictionary-kcal'; conf = 'mid'; }
+        }
         if (grams != null) {
           addFromFood(out, model.byId[rule.ref], grams, added);
           return finish(out, known, added, {
-            conf: 'high', ref: rule.ref, cat: rule.cat || '', method: 'dictionary'
+            conf: conf, ref: rule.ref, cat: rule.cat || '', method: method
           }, opts.est);
         }
       }
@@ -386,10 +408,40 @@
     });
   }
 
+  /*
+     果物の規則(byKcal)ができる前に記録した果物は、カロリーしか持っていない。
+     まだビタミンCの無い記録だけを拾って補う。実測・手入力の値とkcalは上書きしない
+     (fill は欠けている項目だけを足す)。呼び出し前に load() を待つこと。
+  */
+  function needsFruitFill(record) {
+    if (!MODEL || !record || !record.name || !record.nutrients) return false;
+    if (finite(record.nutrients.vitc)) return false;
+    var rule = matchingRule(record.name, MODEL);
+    return !!(rule && rule.byKcal);
+  }
+
+  function fillFruit(record, opts) {
+    if (!needsFruitFill(record)) return Promise.resolve(null);
+    opts = opts || {};
+    return fill(record.name, record.nutrients, {
+      unit: opts.unit || record.unit || 'g',
+      amount: opts.amount == null ? (record.amount || 1) : opts.amount,
+      est: record.est || null
+    }).then(function (filled) {
+      if (!filled || !finite(filled.nutrients.vitc)) return null;
+      var next = {};
+      for (var k in record) next[k] = record[k];
+      next.nutrients = filled.nutrients;
+      next.est = filled.est;
+      return next;
+    });
+  }
+
   global.Estimate = {
     load: load, fill: fill, isExcluded: isExcluded, isSupplement: isSupplement,
     isLegacyChickenLiver: legacyChickenLiver,
     recalibrateChickenLiver: recalibrateChickenLiver,
+    needsFruitFill: needsFruitFill, fillFruit: fillFruit,
     MODEL_VERSION: 2
   };
 })(window);
