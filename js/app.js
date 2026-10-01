@@ -254,6 +254,9 @@
     });
 
     var liverMigration = null, fruitMigration = null;
+    // 日付の上に版を小さく出す(更新が届いたかを、設定の一番下まで見に行かずに確かめられる)
+    var hdrVer = document.getElementById('hdrVer');
+    if (hdrVer) hdrVer.textContent = version();
     S.migrateToilet().then(function () {
       return S.migrateExerciseGoal();
     }).then(function () {

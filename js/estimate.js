@@ -255,12 +255,35 @@
      戻り値: {nutrients, est}。実測値は一切上書きせず、欠損だけを補う。
      kcal が無い食品とサプリメントは null のままにする。
   */
+  /* 果物(byKcal)の記録が、その果物の成分表以外から推定した値を持っているか。
+     v33より前の「記録に栄養素を補う」は、カロリーしか無い食品にも全食品の中央値を当てていた。
+     ゼスプリ サンゴールドの P2.72 F0.79 C7.9 は全食品中央値×54kcalと小数点以下まで一致し、
+     ビタミンCは0.077mgだった(2026-10-02 実機)。手で成分表の食品を紐づけた推定は残す */
+  function staleFruitEstimate(est, rule) {
+    return !!(rule && rule.byKcal && est && est.keys && est.keys.length &&
+      est.method !== 'manual-reference' && String(est.ref || '') !== String(rule.ref || ''));
+  }
+
   function fill(name, known, opts) {
     opts = opts || {};
     known = known || {};
     return load().then(function (model) {
       if (!finite(known.kcal) || known.kcal <= 0 || supplement(name, model)) return null;
-      var out = copyKnown(known), added = [], rule = matchingRule(name, model);
+      var rule = matchingRule(name, model);
+      /* 古い推定値は「分かっている値」ではないので外し、果物の成分表から推定し直す。
+         実測・手入力の値(est.keys に無いもの)とkcalは残す */
+      if (staleFruitEstimate(opts.est, rule)) {
+        var measured = {};
+        for (var mk in known) {
+          if (mk === 'kcal' || opts.est.keys.indexOf(mk) === -1) measured[mk] = known[mk];
+        }
+        known = measured;
+        var fresh = {};
+        for (var ok in opts) fresh[ok] = opts[ok];
+        fresh.est = null;
+        opts = fresh;
+      }
+      var out = copyKnown(known), added = [];
       var needsNutrients = F.KEYS.some(function (k) { return k !== 'kcal' && !finite(out[k]); });
       if (!needsNutrients) return null;
 
@@ -409,15 +432,17 @@
   }
 
   /*
-     果物の規則(byKcal)ができる前に記録した果物は、カロリーしか持っていない。
-     まだビタミンCの無い記録だけを拾って補う。実測・手入力の値とkcalは上書きしない
-     (fill は欠けている項目だけを足す)。呼び出し前に load() を待つこと。
+     果物の規則(byKcal)ができる前に記録した果物は、カロリーしか持っていないか、
+     前の版でほかの方法(全食品の中央値など)で推定した値を持っている。
+     それらを拾って、果物の成分表から補い直す。実測・手入力の値とkcalは上書きしない
+     (fill は古い推定値だけを外し、欠けている項目を足す)。呼び出し前に load() を待つこと。
   */
   function needsFruitFill(record) {
     if (!MODEL || !record || !record.name || !record.nutrients) return false;
-    if (finite(record.nutrients.vitc)) return false;
     var rule = matchingRule(record.name, MODEL);
-    return !!(rule && rule.byKcal);
+    if (!rule || !rule.byKcal) return false;
+    // ビタミンCが空のものと、前の版でほかの方法(全食品の中央値など)で推定したもの
+    return !finite(record.nutrients.vitc) || staleFruitEstimate(record.est, rule);
   }
 
   function fillFruit(record, opts) {

@@ -683,7 +683,7 @@
     toiletMigrated: 0,
     exerciseGoal322Migrated: 0, // 旧既定値200kcalを322kcalへ移した版
     chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
-    fruitEstimateMigrated: 0,     // 記録済みの果物(カロリーだけ)に成分表の値を補った版(v42)
+    fruitEstimateMigrated: 0,     // 記録済みの果物に成分表の値を補った回(1=v42 空のものだけ / 2=v43 古い推定も)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -849,7 +849,9 @@
   */
   function migrateFruitEstimate() {
     return Settings.get().then(function (st) {
-      if (st.fruitEstimateMigrated) {
+      /* v42(印=1)はビタミンCが空の記録しか拾わず、前の版の推定値(全食品の中央値など)が
+         残った果物を素通りした。v43(印=2)で、古い推定のある果物も補い直す */
+      if ((st.fruitEstimateMigrated || 0) >= 2) {
         return { entries: 0, myfoods: 0, combos: 0, changed: 0, skipped: true };
       }
       var estimator = global.Estimate;
@@ -895,7 +897,7 @@
           changedEntries.forEach(function (rec) { stores[0].put(rec); });
           changedFoods.forEach(function (rec) { stores[1].put(rec); });
           changedCombos.forEach(function (rec) { stores[2].put(rec); });
-          st.fruitEstimateMigrated = 1;
+          st.fruitEstimateMigrated = 2;
           stores[3].put({ k: 'main', v: st });
           return true;
         }).then(function () {
