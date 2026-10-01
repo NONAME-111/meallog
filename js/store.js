@@ -684,6 +684,7 @@
     exerciseGoal322Migrated: 0, // 旧既定値200kcalを322kcalへ移した版
     chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
     fruitEstimateMigrated: 0,     // 記録済みの果物に成分表の値を補った回(1=v42 空のものだけ / 2=v43 古い推定も)
+    estimateCleanupMigrated: 0,   // v33より前の推定値を今の決まりで計算し直した版(v44)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -911,6 +912,129 @@
     });
   }
 
+  /*
+     v33より前の「記録に栄養素を補う」が当てた推定値(全食品の中央値・代表食品のカロリー比)を、
+     今の決まりで計算し直す(一度だけ)。カロリーしか無い食品は値が不明に戻り、果物は成分表の値になる。
+     件数が多い(実データ相当で約1万6千件)ので、画面を出してから裏で動かす。
+     そのあいだに利用者が記録を直しても上書きしないよう、書き込む直前に読み直し、
+     読んだときから栄養素が変わっていない記録だけを書く。設定も読み直して印だけを足す。
+  */
+  function migrateEstimateCleanup() {
+    return Settings.get().then(function (st) {
+      if (st.estimateCleanupMigrated) {
+        return { entries: 0, myfoods: 0, combos: 0, changed: 0, cleared: 0, skipped: true };
+      }
+      var estimator = global.Estimate;
+      if (!estimator || !estimator.reestimate) {
+        return Promise.reject(new Error('推定の整理処理を読み込めませんでした'));
+      }
+      return Promise.all([
+        estimator.load(), allEntries(), MyFoods.all(), Combos.all()
+      ]).then(function (r) {
+        var entries = (r[1] || []).filter(notSkip), myfoods = r[2] || [], combos = r[3] || [];
+        /* 1万件を超えるので、200件ずつ計算して合間に画面の処理を挟む。
+           一気に走らせると、その間は画面を触っても反応しない(手元のPCでも3秒以上止まった) */
+        var jobs = [];
+        entries.filter(estimator.needsReestimate).forEach(function (rec) {
+          jobs.push({ kind: 'entries', rec: rec, opts: { unit: rec.unit || 'g', amount: rec.amount || 1 } });
+        });
+        myfoods.filter(estimator.needsReestimate).forEach(function (rec) {
+          jobs.push({ kind: 'myfoods', rec: rec, opts: {
+            unit: rec.basis === 'serving' ? (rec.servingLabel || '食') : 'g',
+            amount: rec.basis === 'serving' ? 1 : 100
+          } });
+        });
+        var done = { entries: [], myfoods: [] }, at = 0;
+        function step() {
+          var slice = jobs.slice(at, at + 200);
+          if (!slice.length) return Promise.resolve();
+          return Promise.all(slice.map(function (job) {
+            return estimator.reestimate(job.rec, job.opts).then(function (next) {
+              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec.nutrients) });
+            });
+          })).then(function () {
+            at += slice.length;
+            return new Promise(function (resolve) { setTimeout(resolve, 0); }).then(step);
+          });
+        }
+        var comboJobs = combos.filter(function (combo) {
+          return (combo.items || []).some(estimator.needsReestimate);
+        }).map(function (combo) {
+          var items = combo.items || [];
+          return Promise.all(items.map(function (item) {
+            return estimator.reestimate(item, { unit: item.unit || 'g', amount: item.amount || 1 });
+          })).then(function (nextItems) {
+            if (!nextItems.some(Boolean)) return null;
+            var next = {};
+            for (var key in combo) next[key] = combo[key];
+            next.items = items.map(function (item, i) { return nextItems[i] || item; });
+            return { next: next, before: JSON.stringify(items.map(function (x) { return x.nutrients; })) };
+          });
+        });
+        return step().then(function () {
+          return Promise.all([
+            Promise.resolve(done.entries), Promise.resolve(done.myfoods), Promise.all(comboJobs)
+          ]);
+        });
+      }).then(function (groups) {
+        var ce = groups[0].filter(Boolean), cf = groups[1].filter(Boolean), cc = groups[2].filter(Boolean);
+        var written = { entries: 0, myfoods: 0, combos: 0, cleared: 0 };
+        function guardedPut(store, job, kind, fingerprint) {
+          var req = store.get(job.next.id);
+          req.onsuccess = function () {
+            var now = req.result;
+            if (now && fingerprint(now) === job.before) {
+              store.put(job.next);
+              written[kind]++;
+              if (kind !== 'combos' && !job.next.est) written.cleared++;
+            }
+          };
+        }
+        /* 書き込みも500件ずつの取引に分け、合間に画面の処理を挟む。
+           1万5千件を1回の取引で書くと、手元のPCでも1.4秒画面が止まった。
+           途中でアプリを閉じても、書いた分はそのまま残り、次の起動で残りだけを続ける
+           (書き終えた記録は推定値が今の決まりと同じになっているので、もう対象にならない) */
+        var byNutrients = function (x) { return JSON.stringify(x.nutrients); };
+        var byItems = function (x) {
+          return JSON.stringify((x.items || []).map(function (i) { return i.nutrients; }));
+        };
+        var batches = [], b;
+        for (b = 0; b < ce.length; b += 500) batches.push({ store: 'entries', jobs: ce.slice(b, b + 500), fp: byNutrients });
+        for (b = 0; b < cf.length; b += 500) batches.push({ store: 'myfoods', jobs: cf.slice(b, b + 500), fp: byNutrients });
+        if (cc.length) batches.push({ store: 'combos', jobs: cc, fp: byItems });
+        invalidate();
+        function writeBatch(k) {
+          if (k >= batches.length) return Promise.resolve();
+          var batch = batches[k];
+          return run(batch.store, 'readwrite', function (store) {
+            batch.jobs.forEach(function (job) { guardedPut(store, job, batch.store, batch.fp); });
+            return true;
+          }).then(function () {
+            return new Promise(function (resolve) { setTimeout(resolve, 0); });
+          }).then(function () { return writeBatch(k + 1); });
+        }
+        return writeBatch(0).then(function () {
+          // 設定は読み直して印だけを足す(整理のあいだに利用者が設定を変えても消さない)
+          return run('settings', 'readwrite', function (store) {
+            var sreq = store.get('main');
+            sreq.onsuccess = function () {
+              var cur = (sreq.result && sreq.result.v) || {};
+              cur.estimateCleanupMigrated = 1;
+              store.put({ k: 'main', v: cur });
+            };
+            return true;
+          });
+        }).then(function () {
+          invalidate();
+          return {
+            entries: written.entries, myfoods: written.myfoods, combos: written.combos,
+            changed: written.entries + written.myfoods + written.combos, cleared: written.cleared
+          };
+        });
+      });
+    });
+  }
+
   /* ---------------- 全データ書き出し/取り込み ---------------- */
   function exportAll() {
     return Promise.all([
@@ -970,6 +1094,7 @@
     migrateToilet: migrateToilet, migrateExerciseGoal: migrateExerciseGoal,
     migrateChickenLiver: migrateChickenLiver,
     migrateFruitEstimate: migrateFruitEstimate,
+    migrateEstimateCleanup: migrateEstimateCleanup,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

@@ -462,8 +462,60 @@
     });
   }
 
+  /*
+     v33より前の推定は、カロリーしか無い食品にも全食品の中央値や代表食品のカロリー比を当てていた。
+     9/22の実測で当てにならないと分かった値で、記録・マイ食品・セットに残っていた
+     (2026-10-02 利用者の判断で整理)。推定値(est.keys)を外し、実測・手入力の値とkcalだけから
+     今の決まりで推定し直す。今の決まりで推定できないもの(カロリーしか無い食品など)は値が不明に戻る。
+     手で成分表の食品を紐づけた推定(manual-reference)は利用者の選択なので触らない。
+     変わらないものは null を返す。呼び出し前に load() を待つこと。
+  */
+  function needsReestimate(record) {
+    var est = record && record.est;
+    return !!(record && record.name && record.nutrients && est && est.keys && est.keys.length &&
+      est.method !== 'manual-reference');
+  }
+
+  function sameNutrients(a, b) {
+    var keys = {};
+    for (var k in (a || {})) keys[k] = 1;
+    for (var k2 in (b || {})) keys[k2] = 1;
+    for (var key in keys) {
+      var x = a[key], y = b[key];
+      if (finite(x) !== finite(y)) return false;
+      if (finite(x) && Math.abs(x - y) > 1e-6) return false;
+    }
+    return true;
+  }
+
+  function reestimate(record, opts) {
+    if (!needsReestimate(record)) return Promise.resolve(null);
+    opts = opts || {};
+    var keys = record.est.keys, measured = {};
+    for (var k in record.nutrients) {
+      if (k === 'kcal' || keys.indexOf(k) === -1) measured[k] = record.nutrients[k];
+    }
+    return fill(record.name, measured, {
+      unit: opts.unit || record.unit || 'g',
+      amount: opts.amount == null ? (record.amount || 1) : opts.amount,
+      est: null
+    }).then(function (filled) {
+      var nutrients = filled ? filled.nutrients : measured;
+      var est = filled ? filled.est : null;
+      if (sameNutrients(nutrients, record.nutrients) &&
+          String(est ? est.method : '') === String(record.est.method || '') &&
+          String(est ? est.ref : '') === String(record.est.ref || '')) return null;
+      var next = {};
+      for (var key in record) next[key] = record[key];
+      next.nutrients = nutrients;
+      if (est) next.est = est; else delete next.est;
+      return next;
+    });
+  }
+
   global.Estimate = {
     load: load, fill: fill, isExcluded: isExcluded, isSupplement: isSupplement,
+    needsReestimate: needsReestimate, reestimate: reestimate,
     isLegacyChickenLiver: legacyChickenLiver,
     recalibrateChickenLiver: recalibrateChickenLiver,
     needsFruitFill: needsFruitFill, fillFruit: fillFruit,

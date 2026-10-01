@@ -281,6 +281,14 @@
       if (fruitMigration && fruitMigration.changed) {
         toast('果物の記録 ' + fruitMigration.changed + '件にビタミンなどを補いました', 4200);
       }
+      // 前の版の推定値(全食品の中央値など)を今の決まりで計算し直す(一度だけ)。
+      // 件数が多いので画面を出してから裏で動かす。読めなかった場合は次回また試す
+      S.migrateEstimateCleanup().then(function (r) {
+        if (!r || !r.changed) return;
+        toast('前の版の推定値を整理しました（' + r.changed + '件。値が不明に戻したもの ' +
+          r.cleared + '件）', 6000);
+        if (!sheetOpen()) render();
+      }).catch(function (e) { void e; });
       global.Steps.receiveUrl().then(function (count) {
         if (count) { toast(count + '日分の歩数を取り込みました', 3500); render(); }
       }).catch(function (e) { toast('歩数を取り込めませんでした: ' + e.message, 5000); });
