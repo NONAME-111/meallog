@@ -153,8 +153,9 @@
       '<hr class="sep">' +
       '<div class="small muted" style="margin-bottom:8px">過去の記録に、商品データと' +
       '日本食品標準成分表から、欠けているビタミン・ミネラルなどを補います。' +
-      'PFCが分かっている食品と、果物のように食品そのものが決まるものが対象です。' +
-      'カロリーしか分からない食品は、当てにならないので補いません（値が不明のまま）。' +
+      '商品データにある食品（よく記録する市販品など。こちらは更新のときに自動で補います）、' +
+      'PFCが分かっている食品、果物のように食品そのものが決まるものが対象です。' +
+      'それ以外でカロリーしか分からない食品は、当てにならないので補いません（値が不明のまま）。' +
       '実測値は変更せず、推定した項目には印を付けます。件数が多いと数十秒かかります。</div>' +
       '<button class="btn line wide" id="btnEnrich">記録に栄養素を補う</button>' +
       '<div class="tiny muted" id="enrichProgress" role="status" hidden style="margin-top:8px"></div>' +
@@ -318,11 +319,16 @@
         return S.migrateChickenLiver().catch(function () { return null; });
       }).then(function () {
         // 古いバックアップの果物(カロリーだけ)にも、取り込んだその場で成分表の値を補う
-        return S.Settings.save({ fruitEstimateMigrated: 0, estimateCleanupMigrated: 0 }).then(function () {
+        return S.Settings.save({
+          fruitEstimateMigrated: 0, estimateCleanupMigrated: 0, productFillMigrated: 0
+        }).then(function () {
           return S.migrateFruitEstimate().catch(function () { return null; });
         }).then(function () {
           // 古いバックアップに残る前の版の推定値も、今の決まりで計算し直す
           return S.migrateEstimateCleanup().catch(function () { return null; });
+        }).then(function () {
+          // 商品マスタにある食品は、取り込んだ記録にもその場で栄養成分を補う
+          return S.migrateProductFill().catch(function () { return null; });
         });
       }).then(function () {
         return A().reloadSettings();

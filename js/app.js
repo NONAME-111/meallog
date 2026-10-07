@@ -284,9 +284,17 @@
       // 前の版の推定値(全食品の中央値など)を今の決まりで計算し直す(一度だけ)。
       // 件数が多いので画面を出してから裏で動かす。読めなかった場合は次回また試す
       S.migrateEstimateCleanup().then(function (r) {
-        if (!r || !r.changed) return;
-        toast('前の版の推定値を整理しました（' + r.changed + '件。値が不明に戻したもの ' +
-          r.cleared + '件）', 6000);
+        if (r && r.changed) {
+          toast('前の版の推定値を整理しました（' + r.changed + '件。値が不明に戻したもの ' +
+            r.cleared + '件）', 6000);
+          if (!sheetOpen()) render();
+        }
+      }).catch(function (e) { void e; }).then(function () {
+        // 商品マスタに足した食品を、記録済みの分にも当てる(版ごとに一度)。整理が終わってから動かす
+        return S.migrateProductFill();
+      }).then(function (p) {
+        if (!p || !p.changed) return;
+        toast('記録済みの ' + p.changed + '件に、商品の栄養成分を補いました', 5000);
         if (!sheetOpen()) render();
       }).catch(function (e) { void e; });
       global.Steps.receiveUrl().then(function (count) {

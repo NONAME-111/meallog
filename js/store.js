@@ -685,6 +685,7 @@
     chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
     fruitEstimateMigrated: 0,     // 記録済みの果物に成分表の値を補った回(1=v42 空のものだけ / 2=v43 古い推定も)
     estimateCleanupMigrated: 0,   // v33より前の推定値を今の決まりで計算し直した版(v44)
+    productFillMigrated: 0,       // 商品マスタに足した食品を記録済みの分にも当てた版(45=v45)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -701,13 +702,22 @@
           return out;
         });
     },
+    /* 読み出しと書き込みを1つの取引で行う。別々の取引にすると、そのあいだに裏の移行処理が
+       書いた印(estimateCleanupMigrated / productFillMigrated)を、読んだときの古い内容で
+       上書きして消してしまう(2026-10-08 確認。起動時の「食べなかった」埋めの保存と重なった) */
     save: function (obj) {
-      return Settings.get().then(function (cur) {
-        for (var k in obj) cur[k] = obj[k];
-        return run('settings', 'readwrite', function (s) {
-          return reqp(s.put({ k: 'main', v: cur }));
-        }).then(function () { return cur; });
-      });
+      var cur = null;
+      return run('settings', 'readwrite', function (s) {
+        var req = s.get('main');
+        req.onsuccess = function () {
+          var v = (req.result && req.result.v) || {};
+          cur = {};
+          for (var k in DEFAULT_SETTINGS) cur[k] = (v[k] !== undefined) ? v[k] : DEFAULT_SETTINGS[k];
+          for (var key in obj) cur[key] = obj[key];
+          s.put({ k: 'main', v: cur });
+        };
+        return true;
+      }).then(function () { return cur; });
     }
   };
 
@@ -978,57 +988,170 @@
         });
       }).then(function (groups) {
         var ce = groups[0].filter(Boolean), cf = groups[1].filter(Boolean), cc = groups[2].filter(Boolean);
-        var written = { entries: 0, myfoods: 0, combos: 0, cleared: 0 };
-        function guardedPut(store, job, kind, fingerprint) {
-          var req = store.get(job.next.id);
-          req.onsuccess = function () {
-            var now = req.result;
-            if (now && fingerprint(now) === job.before) {
-              store.put(job.next);
-              written[kind]++;
-              if (kind !== 'combos' && !job.next.est) written.cleared++;
-            }
-          };
-        }
-        /* 書き込みも500件ずつの取引に分け、合間に画面の処理を挟む。
-           1万5千件を1回の取引で書くと、手元のPCでも1.4秒画面が止まった。
-           途中でアプリを閉じても、書いた分はそのまま残り、次の起動で残りだけを続ける
-           (書き終えた記録は推定値が今の決まりと同じになっているので、もう対象にならない) */
-        var byNutrients = function (x) { return JSON.stringify(x.nutrients); };
-        var byItems = function (x) {
-          return JSON.stringify((x.items || []).map(function (i) { return i.nutrients; }));
-        };
-        var batches = [], b;
-        for (b = 0; b < ce.length; b += 500) batches.push({ store: 'entries', jobs: ce.slice(b, b + 500), fp: byNutrients });
-        for (b = 0; b < cf.length; b += 500) batches.push({ store: 'myfoods', jobs: cf.slice(b, b + 500), fp: byNutrients });
-        if (cc.length) batches.push({ store: 'combos', jobs: cc, fp: byItems });
-        invalidate();
-        function writeBatch(k) {
-          if (k >= batches.length) return Promise.resolve();
-          var batch = batches[k];
-          return run(batch.store, 'readwrite', function (store) {
-            batch.jobs.forEach(function (job) { guardedPut(store, job, batch.store, batch.fp); });
-            return true;
-          }).then(function () {
-            return new Promise(function (resolve) { setTimeout(resolve, 0); });
-          }).then(function () { return writeBatch(k + 1); });
-        }
-        return writeBatch(0).then(function () {
-          // 設定は読み直して印だけを足す(整理のあいだに利用者が設定を変えても消さない)
-          return run('settings', 'readwrite', function (store) {
-            var sreq = store.get('main');
-            sreq.onsuccess = function () {
-              var cur = (sreq.result && sreq.result.v) || {};
-              cur.estimateCleanupMigrated = 1;
-              store.put({ k: 'main', v: cur });
-            };
-            return true;
-          });
-        }).then(function () {
-          invalidate();
+        return writeGuarded(ce, cf, cc, { estimateCleanupMigrated: 1 }).then(function (written) {
           return {
             entries: written.entries, myfoods: written.myfoods, combos: written.combos,
             changed: written.entries + written.myfoods + written.combos, cleared: written.cleared
+          };
+        });
+      });
+    });
+  }
+
+  /* 裏で動かす移行の書き込み(migrateEstimateCleanup / migrateProductFill で共通)。
+     ce/cf/cc は {next: 書きたい記録, before: 読んだときの栄養素の写し} の配列(食事記録/マイ食品/セット)。
+     そのあいだに利用者が記録を直しても上書きしないよう、書き込む直前に読み直し、
+     読んだときから栄養素が変わっていない記録だけを書く。最後に設定を読み直して印だけを足す。 */
+  function writeGuarded(ce, cf, cc, settingsPatch) {
+    var written = { entries: 0, myfoods: 0, combos: 0, cleared: 0 };
+    function guardedPut(store, job, kind, fingerprint) {
+      var req = store.get(job.next.id);
+      req.onsuccess = function () {
+        var now = req.result;
+        if (now && fingerprint(now) === job.before) {
+          store.put(job.next);
+          written[kind]++;
+          if (kind !== 'combos' && !job.next.est) written.cleared++;
+        }
+      };
+    }
+    /* 書き込みも500件ずつの取引に分け、合間に画面の処理を挟む。
+       1万5千件を1回の取引で書くと、手元のPCでも1.4秒画面が止まった。
+       途中でアプリを閉じても、書いた分はそのまま残り、次の起動で残りだけを続ける
+       (書き終えた記録はもう対象にならない) */
+    var byNutrients = function (x) { return JSON.stringify(x.nutrients); };
+    var byItems = function (x) {
+      return JSON.stringify((x.items || []).map(function (i) { return i.nutrients; }));
+    };
+    var batches = [], b;
+    for (b = 0; b < ce.length; b += 500) batches.push({ store: 'entries', jobs: ce.slice(b, b + 500), fp: byNutrients });
+    for (b = 0; b < cf.length; b += 500) batches.push({ store: 'myfoods', jobs: cf.slice(b, b + 500), fp: byNutrients });
+    if (cc.length) batches.push({ store: 'combos', jobs: cc, fp: byItems });
+    invalidate();
+    function writeBatch(k) {
+      if (k >= batches.length) return Promise.resolve();
+      var batch = batches[k];
+      return run(batch.store, 'readwrite', function (store) {
+        batch.jobs.forEach(function (job) { guardedPut(store, job, batch.store, batch.fp); });
+        return true;
+      }).then(function () {
+        return new Promise(function (resolve) { setTimeout(resolve, 0); });
+      }).then(function () { return writeBatch(k + 1); });
+    }
+    return writeBatch(0).then(function () {
+      // 設定は読み直して印だけを足す(移行のあいだに利用者が設定を変えても消さない)
+      return run('settings', 'readwrite', function (store) {
+        var sreq = store.get('main');
+        sreq.onsuccess = function () {
+          var cur = (sreq.result && sreq.result.v) || {};
+          for (var key in settingsPatch) cur[key] = settingsPatch[key];
+          store.put({ k: 'main', v: cur });
+        };
+        return true;
+      });
+    }).then(function () {
+      invalidate();
+      return written;
+    });
+  }
+
+  /*
+     商品マスタ(product-nutrients.json)に足した食品を、記録済みの分にも当てる(版ごとに一度)。
+     v45: 記録の多い上位100品を調べて67品を足し、成分表の食品はいつもカロリーに比例させるようにした。
+     商品マスタはこれまで「食品を追加」で選んだときにしか当たらず、記録済みの分はカロリーだけのままだった。
+     Foods.mergeProduct は欠けている項目と推定値だけを埋め、実測・手入力の値は上書きしない。
+     PFCが入った記録には、食品を追加するときと同じ Estimate.fill でビタミン・ミネラルも補う。
+     商品マスタを読めなかったとき(初回オフラインなど)は印を付けず、次の起動でまた試す。
+     次に商品マスタへ食品を足した版では PRODUCT_FILL_VERSION をその版に上げれば、もう一度走る。
+  */
+  var PRODUCT_FILL_VERSION = 45;
+  function migrateProductFill() {
+    return Settings.get().then(function (st) {
+      if ((st.productFillMigrated || 0) >= PRODUCT_FILL_VERSION) {
+        return { entries: 0, myfoods: 0, combos: 0, changed: 0, skipped: true };
+      }
+      var F = global.Foods, estimator = global.Estimate;
+      if (!F || !F.mergeProduct || !estimator || !estimator.fill) {
+        return Promise.reject(new Error('商品マスタの処理を読み込めませんでした'));
+      }
+      return Promise.all([
+        F.loadProducts(), estimator.load(), allEntries(), MyFoods.all(), Combos.all()
+      ]).then(function (r) {
+        if (!F.productCount()) throw new Error('商品マスタを読み込めませんでした');
+        var entries = (r[2] || []).filter(notSkip), myfoods = r[3] || [], combos = r[4] || [];
+
+        // 1件ぶん。変わらなければ null。記録そのもの(画面と共有の控え)は書き換えない
+        function applyMaster(rec, unit, amount) {
+          if (!rec || !rec.name || !F.productFor(rec.name)) return Promise.resolve(null);
+          var oldEst = rec.est && rec.est.keys && rec.est.keys.length ? rec.est : null;
+          var merged = F.mergeProduct(rec.name, rec.nutrients || {}, unit, amount,
+            oldEst ? oldEst.keys : []);
+          if (!merged.changed) return Promise.resolve(null);
+          var next = {};
+          for (var k in rec) next[k] = rec[k];
+          next.nutrients = merged.nutrients;
+          delete next.est;
+          if (oldEst) {
+            // 商品マスタで埋まった項目は推定ではなくなる
+            var remaining = oldEst.keys.filter(function (key) {
+              return (merged.appliedKeys || []).indexOf(key) === -1;
+            });
+            if (remaining.length) next.est = Object.assign({}, oldEst, { keys: remaining });
+          }
+          return estimator.fill(next.name, next.nutrients, {
+            unit: unit, amount: amount, est: next.est || null
+          }).then(function (filled) {
+            if (filled) { next.nutrients = filled.nutrients; next.est = filled.est; }
+            return next;
+          });
+        }
+
+        var jobs = [];
+        entries.forEach(function (rec) {
+          if (F.productFor(rec.name)) jobs.push({ kind: 'entries', rec: rec, unit: rec.unit || 'g', amount: rec.amount || 1 });
+        });
+        myfoods.forEach(function (rec) {
+          if (!F.productFor(rec.name)) return;
+          var serving = rec.basis === 'serving';
+          jobs.push({ kind: 'myfoods', rec: rec, unit: serving ? (rec.servingLabel || '食') : 'g', amount: serving ? 1 : 100 });
+        });
+        // 計算も200件ずつにして、合間に画面の処理を挟む
+        var done = { entries: [], myfoods: [] }, at = 0;
+        function step() {
+          var slice = jobs.slice(at, at + 200);
+          if (!slice.length) return Promise.resolve();
+          return Promise.all(slice.map(function (job) {
+            return applyMaster(job.rec, job.unit, job.amount).then(function (next) {
+              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec.nutrients) });
+            });
+          })).then(function () {
+            at += slice.length;
+            return new Promise(function (resolve) { setTimeout(resolve, 0); }).then(step);
+          });
+        }
+        var comboJobs = combos.filter(function (combo) {
+          return (combo.items || []).some(function (item) { return item && F.productFor(item.name); });
+        }).map(function (combo) {
+          var items = combo.items || [];
+          return Promise.all(items.map(function (item) {
+            return applyMaster(item, item.unit || 'g', item.amount || 1);
+          })).then(function (nextItems) {
+            if (!nextItems.some(Boolean)) return null;
+            var next = {};
+            for (var key in combo) next[key] = combo[key];
+            next.items = items.map(function (item, i) { return nextItems[i] || item; });
+            return { next: next, before: JSON.stringify(items.map(function (x) { return x.nutrients; })) };
+          });
+        });
+        return step().then(function () {
+          return Promise.all(comboJobs);
+        }).then(function (cc) {
+          return writeGuarded(done.entries, done.myfoods, cc.filter(Boolean),
+            { productFillMigrated: PRODUCT_FILL_VERSION });
+        }).then(function (written) {
+          return {
+            entries: written.entries, myfoods: written.myfoods, combos: written.combos,
+            changed: written.entries + written.myfoods + written.combos
           };
         });
       });
@@ -1095,6 +1218,7 @@
     migrateChickenLiver: migrateChickenLiver,
     migrateFruitEstimate: migrateFruitEstimate,
     migrateEstimateCleanup: migrateEstimateCleanup,
+    migrateProductFill: migrateProductFill,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

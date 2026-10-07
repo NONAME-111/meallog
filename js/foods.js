@@ -575,18 +575,29 @@
     var ratio = null, factor = amount;
     var knownKcal = out.kcal;
     var masterKcal = p.nut.kcal;
+    /* 成分表の食品(src が「成分表 …」)は、名前で食品そのものが決まり、カロリーあたりの成分も一定。
+       記録の1単位がマスタの想定と何倍違っても量の違いなので、いつも記録のカロリーに比例させる
+       (ショルダーベーコン「1枚」に厚切り1枚分の225kcalを入れた記録が、20gの想定と6倍違って弾かれていた) */
+    var generic = /^成分表\s/.test(p.src || '');
     if (typeof knownKcal === 'number' && isFinite(knownKcal) && knownKcal > 0 &&
         typeof masterKcal === 'number' && isFinite(masterKcal) && masterKcal > 0) {
       ratio = knownKcal / (masterKcal * amount);
       // 指示書の倍率表と同じく小数第2位で判定する。116/292 のような
       // 境界上の同一商品サイズ違いを、浮動小数の端数だけで拒否しない。
       var judgedRatio = round(ratio, 2);
-      if (judgedRatio < 0.4 || judgedRatio > 2.5) {
+      /* 極端な差は別商品として使わない。v11 では弾いた食品を推定に回していたが、v33 から
+         カロリーしか無い食品は推定しないので、弾くと値が空のまま残る。名前が完全に一致して
+         弾かれていたのは、小袋(通の枝豆 0.32倍)や「1個」に3個分(サラダチキン 3.3倍)のような
+         同じ商品の量の違いだけだった(2026-10-08 全記録で確認)ので、商品は0.2〜5倍まで受け入れる。
+         公式の1回量と照合済みの品(fixed: サプリ等)は従来どおり0.4〜2.5倍 */
+      var low = p.fixed ? 0.4 : 0.2, high = p.fixed ? 2.5 : 5;
+      if (!generic && (judgedRatio < low || judgedRatio > high)) {
         return { nutrients: out, changed: false, rejected: true, ratio: ratio, product: p };
       }
       // 公式資料で指定1回量まで照合済みの強化食品・サプリは、丸められた
       // 記録kcalにビタミン量まで引きずられないよう、その指定量を優先する。
-      if (!p.fixed && (ratio < 0.8 || ratio > 1.25)) factor *= ratio;
+      if (generic) factor *= ratio;
+      else if (!p.fixed && (ratio < 0.8 || ratio > 1.25)) factor *= ratio;
     }
 
     estimatedKeys = estimatedKeys || [];
