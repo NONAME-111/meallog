@@ -18,15 +18,9 @@
     'vitb1', 'vitb2', 'niacin', 'vitb6', 'vitb12', 'folate', 'vitc'];
   var REF_ESTIMATE_KEYS = ['fiber', 'satfat', 'monofat', 'polyfat', 'n3', 'n6'].concat(MICRO);
 
-  /* 名前が検索語に当たるか。かなだけで入力されたときは漢字を読み下して照合する。
-     qs は Foods.queryVariants の結果(検索語と、その言い換え)。
-     「キウイ」で「ゼスプリ サンゴールド」、「林檎」で「りんご」の記録も出す */
-  function nameHit(name, qs) {
-    var n = F.norm(name);
-    return qs.some(function (q) {
-      return n.indexOf(q) !== -1 || (F.isKanaQuery(q) && F.kanaContains(n, q));
-    });
-  }
+  /* 名前が検索語に当たるかは Foods.nameMatcher(検索語) で調べる。
+     空白で区切った語は全部含むものだけ(「ヤマキ だしの素」で「だしの素 粉末(1人前1g)(ヤマキ)」)。
+     かなだけの語は漢字を読み下し、言い換えも効く(「キウイ」で「ゼスプリ サンゴールド」、「林檎」で「りんご」) */
 
   /* ---------------- 一覧描画 ---------------- */
   function render(view, state) {
@@ -529,7 +523,7 @@
 
     /* ---- 横断検索(検索欄に文字があるとき) ---- */
     function searchAll(text) {
-      var qs = F.queryVariants(text);
+      var nameHit = F.nameMatcher(text);
       return Promise.all([
         F.searchCommon(text, { limit: 24 }),
         usedList(),
@@ -539,13 +533,13 @@
         F.menuSearch(text, 12)
       ]).then(function (r) {
         var commons = r[0];
-        var used = r[1].filter(function (x) { return nameHit(x.name, qs); }).slice(0, 12);
+        var used = r[1].filter(function (x) { return nameHit(x.name); }).slice(0, 12);
         var usedNames = {};
         used.forEach(function (x) { usedNames[x.name] = 1; });
         var hist = r[2].filter(function (x) {
-          return nameHit(x.name, qs) && !usedNames[x.name];
+          return nameHit(x.name) && !usedNames[x.name];
         }).slice(0, 20);
-        var combos = r[3].filter(function (x) { return nameHit(x.name, qs); });
+        var combos = r[3].filter(function (x) { return nameHit(x.name); });
         // 友好名で出したものと同じ食品番号は、生の成分表側からは省く
         var shown = {};
         commons.forEach(function (c) { shown[c.id] = 1; });
@@ -960,8 +954,8 @@
         S.Entries.topUsed(400),
         F.search(text, { limit: 20 })
       ]).then(function (r) {
-        var qs = F.queryVariants(text);
-        var used = r[1].filter(function (x) { return nameHit(x.name, qs); }).slice(0, 10);
+        var nameHit = F.nameMatcher(text);
+        var used = r[1].filter(function (x) { return nameHit(x.name); }).slice(0, 10);
         var shown = {};
         r[0].forEach(function (c) { shown[c.id] = 1; });
         var seibun = r[2].filter(function (f) { return !shown[f.id]; }).slice(0, 14);
@@ -1866,8 +1860,8 @@
       S.MyFoods.all().then(function (rows) {
         var items = rows.filter(function (x) { return !x.barcode; });
         if (text) {
-          var n = F.norm(text);
-          items = items.filter(function (x) { return F.norm(x.name).indexOf(n) !== -1; });
+          var hit = F.nameMatcher(text);
+          items = items.filter(function (x) { return hit([x.name, x.brand || '']); });
         }
         items = items.slice(0, 40);
         list.innerHTML = items.length

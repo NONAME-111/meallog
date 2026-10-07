@@ -180,6 +180,58 @@
     return out;
   }
 
+  /* 検索欄の文字を、空白(全角・半角)で区切った語に分ける。
+     norm() は空白を消すので、「ヤマキ だしの素」をそのまま探すと1続きの「やまきだしの素」になり、
+     名前の後ろに会社名がある「だしの素 粉末(1人前1g)(ヤマキ)」に当たらなかった(2026-10-08 利用者報告)。
+     語ごとに探して、全部の語を含むものを出す(外食メニューの検索は v40 から同じ考え方) */
+  function queryTerms(text) {
+    return String(text || '').trim().split(/[\s　]+/).filter(function (t) { return !!norm(t); });
+  }
+
+  /* 名前が検索語に当たるかを調べる関数を作る。語ごとに言い換え(queryVariants)を持ち、
+     かなだけの語は漢字を読み下して照合する。全部の語が当たれば true。
+     name に配列を渡すと、語ごとに「どれか1つに含まれていればよい」(名前とブランドなど)。
+     normalized が true なら name は norm 済みとして扱う */
+  function nameMatcher(text) {
+    var groups = queryTerms(text).map(function (t) { return queryVariants(t); })
+      .filter(function (g) { return g.length; });
+    return function (name, normalized) {
+      if (!groups.length) return false;
+      var list = (Array.isArray(name) ? name : [name]).map(function (s) {
+        return normalized ? String(s || '') : norm(s);
+      });
+      return groups.every(function (qs) {
+        return list.some(function (n) {
+          return qs.some(function (q) {
+            return n.indexOf(q) !== -1 || (isKanaQuery(q) && kanaContains(n, q));
+          });
+        });
+      });
+    };
+  }
+
+  /* 語ごとに探した結果のうち、すべての結果に入っているものを返す。
+     並びは各語の結果での順位の合計が小さい順(どの語でも上位のものを先に)。
+     最初の語の順だけで並べると「ご飯 玄米」で白米のめしが先頭に来た */
+  function intersectResults(lists, keyOf) {
+    var ranks = lists.slice(1).map(function (list) {
+      var pos = {};
+      (list || []).forEach(function (x, i) { var k = keyOf(x); if (pos[k] === undefined) pos[k] = i; });
+      return pos;
+    });
+    var rows = [];
+    (lists[0] || []).forEach(function (x, i) {
+      var k = keyOf(x), total = i;
+      for (var r = 0; r < ranks.length; r++) {
+        if (ranks[r][k] === undefined) return;
+        total += ranks[r][k];
+      }
+      rows.push({ x: x, total: total, first: i });
+    });
+    rows.sort(function (a, b) { return a.total - b.total || a.first - b.first; });
+    return rows.map(function (row) { return row.x; });
+  }
+
   /* 言い換えごとに探した結果を、元の検索語の結果を先にして1つにまとめる */
   function mergeVariantResults(lists, keyOf, limit) {
     var seen = {}, out = [];
@@ -220,6 +272,15 @@
   function search(query, opts) {
     opts = opts || {};
     var limit = opts.limit || 60;
+    // 空白で区切った語が複数あるときは、語ごとに探して(別名・言い換え・かな読みもそのまま効く)
+    // 全部の語に当たった食品だけを、最初の語での並び順で出す
+    var terms = queryTerms(query);
+    if (terms.length > 1) {
+      return Promise.all(terms.map(function (t) { return search(t, { limit: 100000 }); }))
+        .then(function (lists) {
+          return intersectResults(lists, function (f) { return f.id; }).slice(0, limit);
+        });
+    }
     var variants = opts._variant ? [] : queryVariants(query);
     if (variants.length > 1) {
       var sub = {};
@@ -517,12 +578,11 @@
     return loadMenu().then(function (db) {
       /* 空白で区切った語を「すべて含む」品を探す。「ガスト ハンバーグ」を
          続きの文字列として探すと、名前がハンバーグで始まる品しか出ない */
-      var terms = String(text || '').split(/[\s　]+/).map(norm).filter(Boolean);
-      if (!terms.length) return [];
+      if (!queryTerms(text).length) return [];
+      var match = nameMatcher(text);
       var hit = [];
       for (var i = 0; i < db.list.length && hit.length < (limit || 12) * 3; i++) {
-        var key = db.list[i].key;
-        if (terms.every(function (t) { return key.indexOf(t) !== -1; })) hit.push(db.list[i]);
+        if (match(db.list[i].key, true)) hit.push(db.list[i]);
       }
       // 公式の公表値を先に出す
       hit.sort(function (a, b) { return (b.official ? 1 : 0) - (a.official ? 1 : 0); });
@@ -543,12 +603,11 @@
 
   /* 名前で引く。読み込み前は何も返さない(検索のたびに0.7MBを取りに行かないため) */
   function offSearch(text, limit) {
-    if (!OFF || !text) return [];
-    var q = norm(text);
-    if (!q) return [];
+    if (!OFF || !text || !queryTerms(text).length) return [];
+    var match = nameMatcher(text);
     var out = [];
     for (var i = 0; i < OFF.list.length && out.length < (limit || 12); i++) {
-      if (OFF.list[i].key.indexOf(q) !== -1) out.push(OFF.list[i]);
+      if (match(OFF.list[i].key, true)) out.push(OFF.list[i]);
     }
     return out;
   }
@@ -658,6 +717,13 @@
     opts = opts || {};
     var raw = String(query || '').trim();
     if (!raw) return Promise.resolve([]);
+    var terms = queryTerms(raw);
+    if (terms.length > 1) {
+      return Promise.all(terms.map(function (t) { return searchCommon(t, { limit: 100000 }); }))
+        .then(function (lists) {
+          return intersectResults(lists, function (it) { return it.key; }).slice(0, opts.limit || 24);
+        });
+    }
     var variants = opts._variant ? [] : queryVariants(raw);
     if (variants.length > 1) {
       var sub = {};
@@ -699,7 +765,7 @@
     load: load, loadCommon: loadCommon, search: search, byId: byId, scale: scale, sum: sum,
     searchCommon: searchCommon, commonById: commonById,
     loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
-    queryVariants: queryVariants,
+    queryVariants: queryVariants, queryTerms: queryTerms, nameMatcher: nameMatcher,
     loadProducts: loadProducts, productFor: productFor, mergeProduct: mergeProduct,
     loadOff: loadOff, offByBarcode: offByBarcode, offSearch: offSearch, offReady: offReady,
     loadMenu: loadMenu, menuSearch: menuSearch, menuAt: menuAt,

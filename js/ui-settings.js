@@ -101,10 +101,11 @@
   var myFoods = [], myFilter = '';
 
   function myFoodRows() {
+    // 空白で区切った語は全部含むものだけ(名前とブランドのどちらに含まれていてもよい)
     var q = F.norm(myFilter.trim());
+    var match = q ? F.nameMatcher(myFilter) : null;
     var hit = q ? myFoods.filter(function (m) {
-      return F.norm(m.name).indexOf(q) !== -1 ||
-        (m.brand && F.norm(m.brand).indexOf(q) !== -1) ||
+      return match([m.name, m.brand || '']) ||
         (m.barcode && String(m.barcode).indexOf(myFilter.trim()) !== -1);
     }) : myFoods;
     if (!myFoods.length) {
