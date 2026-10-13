@@ -50,6 +50,10 @@
     bad: { mark: '✕', text: '要改善' }
   };
   var JUDGE_MARK = { ok: '◎', low: '▼', high: '▲', bad: '✕' };
+  /* 行を押したときに開く詳しい画面のための控え(描くたびに作り直す)。
+     lastEntries は、その日(期間)の記録。「多くとった食品」を出すのに使う */
+  var rowInfo = {};
+  var lastEntries = [];
 
   function render(view, state) {
     return prepareSourceClassification().then(function () {
@@ -87,10 +91,15 @@
       if (!b) return;
       period = parseInt(b.dataset.p, 10); A().render();
     });
-    view.addEventListener('click', function (ev) {
-      var rich = ev.target.closest('[data-rich]');
-      if (rich) showRichFoods(rich.getAttribute('data-rich'));
-    });
+    /* view(#view)は描き直しても同じ要素なので、押したときの処理は1回だけ付ける。
+       描くたびに足していた(v46まで)ため、表示を切り替えるほど同じ処理が重なっていた */
+    if (!view._adviceTap) {
+      view._adviceTap = true;
+      view.addEventListener('click', function (ev) {
+        var row = ev.target.closest('[data-detail]');
+        if (row && view.contains(row)) showNutrientDetail(row.getAttribute('data-detail'));
+      });
+    }
   }
 
   function activityFor(exercises, body) {
@@ -159,6 +168,7 @@
         return !slots[key] && !S.Entries.isSkipped(all, key);
       });
       var sources = sourceBreakdown(entries, data.totals);
+      lastEntries = entries;
       view.innerHTML = segHtml() + scoreCard(sc, hasEntries, missing, '') + commentCard(cmts) +
         importedCard(dt.imported) + groupedCard(sc, data.totals, tg, data.coverage, data.estimated, activity, sources);
     });
@@ -232,6 +242,7 @@
           ? '記録のない ' + (days - tracked.length) + ' 日を除いた ' + tracked.length + ' 日分の平均です'
           : '';
         var sources = averageSourceBreakdown(tracked);
+        lastEntries = rows.filter(S.notSkip);
         view.innerHTML = segHtml() + scoreCard(sc, true, [], note) + commentCard(cmts) +
           dailyScoreCard(daysData, tg) + groupedCard(sc, avg, tg, avgCoverage, avgEstimated, rangeActivity, sources);
       });
@@ -380,8 +391,9 @@
   function groupedCard(sc, totals, tg, coverage, estimated, activity, sources) {
     var byKey = {};
     sc.detail.forEach(function (d) { byKey[d.key] = d; });
+    rowInfo = {};
     var h = '<div class="card score-groups"><div class="row between"><h3>採点と摂取量</h3>' +
-      '<span class="tiny muted score-guide">帯の中に入っていれば適正</span></div>' + sourceLegend();
+      '<span class="tiny muted score-guide">押すと目標と内訳</span></div>' + sourceLegend();
     GROUPS.forEach(function (group) {
       var sum = 0, included = 0;
       group.scored.forEach(function (key) {
@@ -432,15 +444,14 @@
       '</div></details></div>';
   }
 
+  /* バーの読み方。v46までは「基準値」の線と、名前の前の ↓↕↑≒(これ以下/範囲/これ以上/目安)の
+     説明も並べていたが、網かけ(適正の範囲)と同じことを3通りに言っていて読むことが多すぎた
+     (利用者の指摘)。目標の種類と数値は、行を押した画面に文章で出す */
   function sourceLegend() {
     return '<div class="source-legend" aria-label="バーの読み方">' +
       '<span><i class="src-normal"></i>通常食品</span><span><i class="src-sweets"></i>お菓子</span>' +
       '<span><i class="src-alcohol"></i>お酒</span><span><i class="src-supplement"></i>サプリ</span>' +
-      '<span><i class="lg-zone"></i>網かけ＝適正の範囲</span>' +
-      '<span><i class="lg-line"></i>基準値</span></div>' +
-      '<div class="aim-legend"><span><b>↓</b>これ以下に抑える</span>' +
-      '<span><b>↕</b>この範囲に</span><span><b>↑</b>これ以上とる</span>' +
-      '<span><b>≒</b>目安に近づける</span></div>';
+      '<span><i class="lg-zone"></i>適正の範囲</span></div>';
   }
 
   function sourceBar(key, sources, width) {
@@ -478,19 +489,6 @@
     return { fill: fill, markers: markers, zone: zone };
   }
 
-  /* 栄養素は3種類ある。どれなのかを名前の頭の記号で示す。
-     ↓ これ以下に抑える(塩分など) / ↕ この範囲に(カロリー・PFC) / ↑ これ以上とる(ビタミン等) */
-  function aimMark(target) {
-    if (!target) return '';
-    var mark = target.kind === 'max' ? '↓'
-      : target.kind === 'band' ? '↕'
-        : target.kind === 'min' ? '↑' : '≒';
-    var label = target.kind === 'max' ? 'これ以下に抑える'
-      : target.kind === 'band' ? 'この範囲に収める'
-        : target.kind === 'min' ? 'これ以上とる' : '目安に近づける';
-    return '<i class="aim" title="' + label + '" aria-label="' + label + '">' + mark + '</i>';
-  }
-
   function targetZone(spec) {
     var z = spec.zone;
     if (!z || z.to - z.from <= 0) return '';
@@ -504,11 +502,27 @@
     }).join('');
   }
 
-  function targetText(target) {
-    if (target.kind === 'band') return N.fmt(target.goal) + '以上・' + N.fmt(target.max) + '以下';
-    if (target.kind === 'min') return N.fmt(target.goal) + '以上';
-    if (target.kind === 'max') return N.fmt(target.max || target.goal) + '以下';
-    return N.fmt(target.goal) + '目安';
+  /* 目標を文章で。行を押した画面に出す(一覧の行には数値を出さず、網かけで示す) */
+  function targetSentence(target, unit) {
+    var u = unit ? ' ' + unit : '';
+    if (target.kind === 'band') return N.fmt(target.goal) + '〜' + N.fmt(target.max) + u + ' の範囲';
+    if (target.kind === 'min') return N.fmt(target.goal) + u + ' 以上とる';
+    if (target.kind === 'max') return N.fmt(target.max || target.goal) + u + ' 以下に抑える';
+    return N.fmt(target.goal) + u + ' 前後';
+  }
+
+  /* 判定の意味を、記号を知らなくても分かる言葉で(行を押した画面に出す) */
+  function judgeWords(cls, judge) {
+    if (cls === 'ok') return '目標どおり';
+    if (cls === 'low') return '少し足りない';
+    if (cls === 'high') return judge === '不足' ? '少し足りない' : '少し多い';
+    if (cls === 'bad') return judge === '不足' ? 'かなり足りない' : 'かなり多い';
+    return '';
+  }
+
+  function chipHtml(x) {
+    return '<span class="n2-judge ' + x.chipCls + '">' +
+      (x.chipMark ? '<i aria-hidden="true">' + x.chipMark + '</i>' : '') + x.chipText + '</span>';
   }
 
   function nutrientRow(key, detail, totals, tg, coverage, estimated, activity, sources) {
@@ -549,17 +563,44 @@
 
     // ✕ は「大きく外れている」の意味。読み上げにも残す
     var judgeFull = cls === 'bad' ? ('大きく' + judge) : judge;
-    var clickable = detail && !detail.excluded && (detail.kind === 'min' || detail.kind === 'band') &&
-      detail.ratio < 1 && key !== 'exercise';
-    var tag = clickable ? 'button' : 'div';
-    // 1項目1行。名前｜判定｜バー｜摂取量 で、目標値は帯と縦線で表す
-    var h = '<' + tag + ' class="nut-detail' + (clickable ? ' tappable' : '') +
-      '" data-nutrient="' + key + '"' +
-      (clickable ? ' data-rich="' + key + '"' : '') +
-      ' title="' + A().esc(meta[0] + ' ' + (known ? N.fmt(value) : '—') + meta[1] +
-        (judgeFull ? '（' + judgeFull + '）' : '') +
-        (target ? '目標 ' + targetText(target) + ' ' + meta[1] : '')) + '">' +
-      '<span class="nut-name">' + aimMark(target) + A().esc(meta[0]) + '</span>';
+    var excluded = !!(detail && detail.excluded);
+
+    /* 判定の札。適正も含めて、どの行も名前のすぐ右の同じ位置に文字で出す(v47。利用者の指摘)。
+       v46までは、適正は量の右に◎だけ・それ以外は2行目に札で、行の高さがばらばらだった。
+       しかも◎に棒グラフ用の .ok(青の塗り)が効いてしまい、記号の見えない青い四角になっていた。
+       札の記号は向きで決める(不足は▼・過剰は▲・大きく外れたら✕)。色は程度(適正/注意/大きく外れ) */
+    var chip = { chipCls: 'j-none', chipMark: '', chipText: '' };
+    if (!known) chip = { chipCls: 'j-none', chipMark: '？', chipText: '不明' };
+    else if (excluded) chip = { chipCls: 'j-none', chipMark: '', chipText: '対象外' };
+    else if (judge) {
+      chip.chipCls = cls === 'ok' ? 'j-ok' : (cls === 'bad' ? 'j-bad' : 'j-warn');
+      chip.chipMark = cls === 'ok' ? '◎' : (cls === 'bad' ? '✕' : (judge === '不足' ? '▼' : '▲'));
+      chip.chipText = judge;
+    }
+    /* 値の確からしさは、目立たない短い注記を1行目に置くだけにする(詳しくは押した画面で)。
+       「値が不明」「推定で補った」は、その日の食品をカロリーで割った割合(量(g)の割合ではない) */
+    var lowData = key !== 'exercise' && known && cov < 0.9;
+    var mostlyEstimated = known && est >= 0.5;   // 半分以上が推定のときだけ(全行に出ると邪魔)
+    var note = [];
+    if (lowData) note.push('不明' + Math.round((1 - cov) * 100) + '%');
+    if (mostlyEstimated) note.push('推定' + Math.round(est * 100) + '%');
+
+    rowInfo[key] = {
+      key: key, value: value, known: known, cov: cov, est: est, target: target, cls: cls,
+      judge: judge, judgeFull: judgeFull, excluded: excluded,
+      chipCls: chip.chipCls, chipMark: chip.chipMark, chipText: chip.chipText,
+      activity: key === 'exercise' ? activity : null, sources: sources && sources[key]
+    };
+
+    /* 1項目は2段で、どの行も同じ高さ。1段目: 名前｜判定｜注記｜量 / 2段目: 幅いっぱいのバー。
+       目標の数値は行に出さず網かけで示し、押した画面に文章で出す */
+    var label = meta[0] + ' ' + (known ? N.fmt(value) + ' ' + meta[1] : '値が不明') +
+      (judgeFull ? '、' + judgeFull : '') + '。押すと目標と内訳';
+    var h = '<button class="nut2" data-detail="' + key + '" aria-label="' + A().esc(label) + '">' +
+      '<span class="n2-name">' + A().esc(meta[0]) + '</span>' + chipHtml(chip) +
+      '<span class="n2-note">' + note.join(' ') + '</span>' +
+      '<span class="n2-val"><b>' + (known && est > 0 ? '約' : '') + (known ? N.fmt(value) : '—') +
+      '</b><i>' + A().esc(meta[1]) + '</i><em aria-hidden="true">›</em></span>';
     if (target) {
       var spec = barSpec(target, known ? value : 0);
       h += '<span class="nut-bar' + (key === 'exercise' ? '' : ' source-stack') + '">' +
@@ -571,42 +612,82 @@
     } else {
       h += '<span class="nut-bar"></span>';
     }
-    /* 適正なら必ず量の右に◎、適正でなければ必ず下に文字。色だけに頼らないので記号は必ず付ける。
-       v31までは「注記が無い行だけ◎」にしていたため、注記のある糖質だけ下に「◎適正」が残り、
-       たんぱく質・炭水化物からは適正の印が消えたように見えていた */
-    var lowData = (key !== 'exercise' && cov < 0.9);
-    var mostlyEstimated = est >= 0.5;   // 半分以上が推定のときだけ知らせる(全行に出ると邪魔)
-    var isExercise = (key === 'exercise' && activity && activity.hasData);
-    var okRow = (cls === 'ok') && !!judge;
-    var hasNote = lowData || mostlyEstimated || isExercise || !!(detail && detail.excluded);
-    h += '<span class="nut-val"><b>' + (est > 0 ? '約' : '') +
-      (known ? N.fmt(value) : '—') + '</b><i>' + A().esc(meta[1]) + '</i>' +
-      (okRow
-        ? '<i class="judge-mark inline ' + cls + '" title="' + A().esc(judgeFull) +
-          '" aria-label="' + A().esc(judgeFull) + '">' + JUDGE_MARK[cls] + '</i>'
-        : '') +
-      (clickable ? '<em>›</em>' : '') + '</span>';
-    if (okRow && !hasNote) return h + '</' + tag + '>';
-    // 2行目: 適正でないときの判定と、値の確からしさの注記
-    var notes = (judge && !okRow)
-      ? '<span class="judge-tag ' + cls + '" aria-label="' + A().esc(judgeFull) +
-        '"><i class="judge-mark" aria-hidden="true">' + JUDGE_MARK[cls] + '</i>' + judge + '</span>'
-      : '';
-    if (detail && detail.excluded) notes += '<span>採点対象外</span>';
-    /* 「栄養データ80%」では意味が伝わらなかったので、足りない側を書く。
-       どちらも「その日の食品をカロリーで割った割合」で、分母は同じ(量(g)の割合ではない) */
-    if (lowData) notes += '<span>値が不明 ' + Math.round((1 - cov) * 100) + '%</span>';
-    if (mostlyEstimated) notes += '<span>推定で補った ' + Math.round(est * 100) + '%</span>';
-    if (key === 'exercise' && activity && activity.hasData) {
-      notes += '<span>運動記録 ' + N.fmt(activity.exerciseKcal) + ' kcal ＋ ' +
-        (activity.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数由来 ') +
-        N.fmt(activity.stepKcal) + ' kcal' +
-        (activity.steps != null ? '（' + Math.round(activity.steps).toLocaleString() + '歩）' :
-          activity.days != null ? '（データあり ' + activity.days + '/' + activity.totalDays + '日）' : '') +
-        '</span>';
+    return h + '</button>';
+  }
+
+  /* 行を押したときの詳しい画面。一覧から外した「目標の数値・種類」「内訳」「値の確からしさ」をここにまとめる */
+  function showNutrientDetail(key) {
+    var x = rowInfo[key];
+    if (!x) return;
+    var meta = F.meta(key), unit = meta[1], esc = A().esc;
+    var rows = [];
+    var words = x.known && !x.excluded ? judgeWords(x.cls, x.judge) : '';
+    rows.push(['判定', chipHtml(x) + (words ? ' <span class="nd-sub">' + words + '</span>' : '') +
+      (x.excluded && x.known ? ' <span class="nd-sub">値が分からない食品が多いので採点に入れていません</span>' : '')]);
+    rows.push(['とった量', x.known
+      ? '<b>' + (x.est > 0 ? '約' : '') + N.fmt(x.value) + '</b> ' + esc(unit) +
+        (period > 1 ? ' <span class="nd-sub">1日あたりの平均</span>' : '')
+      : '値が分かりません']);
+    if (x.target) rows.push(['目標', esc(targetSentence(x.target, unit))]);
+    if (key === 'exercise' && x.activity && x.activity.hasData) {
+      var a = x.activity;
+      rows.push(['内訳', '運動記録 ' + N.fmt(a.exerciseKcal) + ' kcal ＋ ' +
+        (a.walkSource === 'active' ? '活動エネルギー(実測) ' : '歩数から ') + N.fmt(a.stepKcal) + ' kcal' +
+        (a.steps != null ? '（' + Math.round(a.steps).toLocaleString() + '歩）' :
+          a.days != null ? '（データあり ' + a.days + '/' + a.totalDays + '日）' : '')]);
     }
-    h += '<span class="nut-flags">' + notes + '</span>';
-    return h + '</' + tag + '>';
+    // 通常食品・お菓子・お酒・サプリの内訳(2種類以上あるときだけ)
+    if (key !== 'exercise' && x.sources) {
+      var parts = SOURCE_TYPES.filter(function (t) { return (x.sources[t] || 0) > 0; });
+      if (parts.length > 1) {
+        var names = { normal: '通常食品', sweets: 'お菓子', alcohol: 'お酒', supplement: 'サプリ' };
+        rows.push(['内訳', parts.map(function (t) {
+          return '<span class="nd-src"><i class="src-' + t + '"></i>' + names[t] + ' ' +
+            N.fmt(x.sources[t]) + ' ' + esc(unit) + '</span>';
+        }).join('')]);
+      }
+    }
+    if (x.known && x.cov < 0.9 && key !== 'exercise') {
+      var unknownPct = Math.round((1 - x.cov) * 100);
+      rows.push(['値が不明', unknownPct + '% <span class="nd-sub">食べた物のうちカロリーに直して' + unknownPct +
+        '%ぶんは、この値が登録されていません。実際はもっと多い可能性があります</span>']);
+    }
+    if (x.known && x.est > 0) {
+      rows.push(['推定', Math.round(x.est * 100) + '% <span class="nd-sub">食べた物のうちカロリーに直して' +
+        Math.round(x.est * 100) + '%ぶんは、食品成分表から推定した値です</span>']);
+    }
+    var html = '<dl class="nd-list">' + rows.map(function (r) {
+      return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>';
+    }).join('') + '</dl>';
+
+    // その日(期間)に多くとった食品。値の分かる記録だけで数える
+    if (key !== 'exercise') {
+      var byName = {};
+      (lastEntries || []).forEach(function (e) {
+        var v = e.nutrients && e.nutrients[key];
+        if (typeof v !== 'number' || !(v > 0)) return;
+        byName[e.name] = (byName[e.name] || 0) + v;
+      });
+      var top = Object.keys(byName).map(function (n) { return { n: n, v: byName[n] }; })
+        .sort(function (p, q) { return q.v - p.v; }).slice(0, 5);
+      if (top.length) {
+        html += '<h4 class="nd-h">' + (period > 1 ? 'この期間に多くとった食品（合計）' : 'この日に多くとった食品') + '</h4>' +
+          top.map(function (t) {
+            return '<div class="nd-food"><span>' + esc(t.n) + '</span><b>' + N.fmt(t.v) + ' ' + esc(unit) + '</b></div>';
+          }).join('');
+      }
+    }
+    // 足りないものは、成分表で多く含む食品を見られる(v46までは行を押すとここへ直行していた)
+    var short = x.known && !x.excluded && x.target && key !== 'exercise' &&
+      (x.target.kind === 'min' || x.target.kind === 'band') && x.value < x.target.goal;
+    if (short) html += '<button class="btn line wide" id="ndRich" style="margin-top:12px">' +
+      esc(meta[0]) + 'が多い食品を見る</button>';
+    var body = A().openSheet(meta[0], html);
+    var rich = body.querySelector('#ndRich');
+    if (rich) rich.addEventListener('click', function () {
+      A().pushSheet(function () { showNutrientDetail(key); });
+      showRichFoods(key);
+    });
   }
 
   function showRichFoods(key) {
