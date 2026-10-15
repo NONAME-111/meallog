@@ -1382,11 +1382,16 @@
          カメラが画面下半分に開き、読んだ文字がこの欄に直接入る。アプリとカメラを行き来せずに済む。
          コピーして貼る道もあるが、行き来の分だけ遅いので逃げ道にとどめる */
       '<div class="card" id="ocrCard"><h3>栄養成分表示を読み取る</h3>' +
+        /* 今のiOSでは「テキストをスキャン」は、入力欄のメニューの「自動入力」の中にある
+           (2025-12の解説記事で確認)。利用者の実機でも、長押しのメニューは「ペースト」「自動入力」
+           だけだった(2026-09-23)ので、案内は「自動入力」→「テキストをスキャン」の順に書く */
         '<div class="small" style="margin:0 2px 7px">' +
-        '下の欄を<b>長押し</b>して、メニューの<b>「テキストをスキャン」</b>を押すとカメラが起動します。' +
+        '下の欄を<b>長押し</b>して、メニューの<b>「自動入力」→「テキストをスキャン」</b>を押すとカメラが起動します。' +
         '読み取った文字は<b>そのまま下の各欄に入ります</b>。</div>' +
-        '<textarea id="mOcr" class="ocr-input" rows="7" ' +
-        'placeholder="ここを長押し →「テキストをスキャン」"></textarea>' +
+        // data-autofill="keep": 「連絡先を自動入力」対策(app.js の quietAutofill)の対象外。
+        // 「テキストをスキャン」は「自動入力」の中にあるので、この欄には手を入れない
+        '<textarea id="mOcr" class="ocr-input" rows="7" data-autofill="keep" ' +
+        'placeholder="ここを長押し →「自動入力」→「テキストをスキャン」"></textarea>' +
         '<details class="nut-more" id="ocrTextBox">' +
           '<summary>「テキストをスキャン」が出ないとき</summary>' +
           '<div class="small muted" style="margin:0 2px 7px">' +
@@ -1838,7 +1843,7 @@
       '一度登録すれば、次からはこのバーコードを読むだけで呼び出せます。</div></div>' +
       '<button class="btn wide" id="bScanText">📷 パッケージの栄養成分表示を読み取る</button>' +
       '<div class="tiny muted" style="margin:7px 2px 12px">' +
-      '読み取り欄が開きます。その欄を長押し →「テキストをスキャン」でカメラが起動し、' +
+      '読み取り欄が開きます。その欄を長押し →「自動入力」→「テキストをスキャン」でカメラが起動し、' +
       '写した数値がそのまま各欄に入ります</div>' +
       '<button class="btn sub wide" id="bNew">数値を自分で入力して登録</button>' +
       '<div class="card" style="margin-top:12px"><h3>登録済みのマイ食品に紐づける</h3>' +

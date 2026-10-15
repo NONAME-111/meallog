@@ -210,8 +210,42 @@
     return true;
   }
 
+  /* ---------- iPhoneの「連絡先を自動入力」を出さない ----------
+     iPhoneのSafariは、入力欄の name・id・見出し・入力例から「連絡先の欄」かどうかを推測し、
+     キーボードの上に「連絡先を自動入力」を出す。栄養素の数字欄にも出ていた(2026-10-16 利用者報告)。
+     食品名の id="mName" などが名前欄に見え、画面全体が連絡先の入力と見なされたとみられる。
+     autocomplete="off" はこの推測には使われない(Webの報告どおり)。name に search を含む欄は
+     推測の対象外になるので、name の無い入力欄すべてに付ける(このアプリに連絡先を入れる欄は無い)。
+     ・ダッシュは使わない(name のダッシュで電話番号欄と推測された報告がある)
+     ・<form> を使っていないので、決定キーが「検索」に変わることはない
+     ・読み取り欄(data-autofill="keep")は除く。今のiOSでは「テキストをスキャン」が入力欄の
+       メニューの「自動入力」の中にあるので、そこには触らない */
+  var quietSeq = 0;
+  function quietOne(el) {
+    if (el.getAttribute('data-autofill') === 'keep') return;
+    var type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (/^(hidden|file|checkbox|radio|range|button|submit|reset|image|color)$/.test(type)) return;
+    if (!el.getAttribute('name')) el.setAttribute('name', 'search' + (++quietSeq));
+    if (!el.getAttribute('autocomplete')) el.setAttribute('autocomplete', 'off');
+  }
+  function quietAutofill(root) {
+    if (!root || root.nodeType !== 1) return;
+    if (root.matches('input, textarea')) quietOne(root);
+    Array.prototype.forEach.call(root.querySelectorAll('input, textarea'), quietOne);
+  }
+  function watchInputs() {
+    quietAutofill(document.body);
+    // 画面は描き替えて使い回すので、あとから足された欄にも、押される前に付ける
+    new MutationObserver(function (records) {
+      records.forEach(function (r) {
+        Array.prototype.forEach.call(r.addedNodes, quietAutofill);
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
   /* ---------- 起動 ---------- */
   function boot() {
+    watchInputs();
     document.getElementById('datePrev').addEventListener('click', function () {
       setDate(S.shiftYmd(state.date, -1));
     });
