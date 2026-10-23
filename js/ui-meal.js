@@ -452,6 +452,15 @@
         return S.Entries.recent(400, { slot: histSlot || null });
       });
     }
+    /* 検索するときは、件数で切らずに全期間の履歴から探す。
+       最新400品だけを対象にしていたため、「全部」(朝・昼・夕・間食を合わせた最新400品)では
+       去年の夕食の品が範囲外になり、「夕食」(夕食だけの最新400品)で絞ると出る、という
+       逆転が起きていた(2026-10-23 利用者報告「豚キムチ エースコック」)。一覧を眺めるときは今のまま */
+    function histAll() {
+      return once('histAll:' + histSlot, function () {
+        return S.Entries.recent(Infinity, { slot: histSlot || null });
+      });
+    }
     function comboList() { return once('combos', function () { return S.Combos.all(); }); }
 
     // 数量入力などから戻ってきたときに、同じ場所を開き直すための関数
@@ -527,7 +536,7 @@
       return Promise.all([
         F.searchCommon(text, { limit: 24 }),
         usedList(),
-        histList(),
+        histAll(),
         comboList(),
         F.search(text, { limit: 24 }),
         F.menuSearch(text, 12)
@@ -951,7 +960,8 @@
       }
       Promise.all([
         F.searchCommon(text, { limit: 20 }),
-        S.Entries.topUsed(400),
+        // 検索は件数で切らない(上位400品に入らない、たまにしか食べない品も探せるように)
+        S.Entries.topUsed(Infinity),
         F.search(text, { limit: 20 })
       ]).then(function (r) {
         var nameHit = F.nameMatcher(text);
