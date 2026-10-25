@@ -9,7 +9,8 @@
    ・前処理と後処理は PaddleOCR の設定(inference.yml)に合わせた。
      文字の位置: 長辺640〜960px・BGR・ImageNetの平均と分散で正規化 → DB後処理(0.3 / 0.6 / 1.5)
      文字の読み: 高さ48px・(x/255-0.5)/0.5 → CTC(0番が区切り、辞書の後ろに空白)
-   ・確かめ用のページ: app/work/ocr-test.html, ocr-test2.html(合成した表示で読み取りを試す。公開しない) */
+   ・確かめ用のページ: app/work/ocr-test.html, ocr-test2.html(合成した表示)、ocr-real.html(利用者の実機の写真
+     label1.webp。v51で直した行間の狭い表示)。どれも公開しない */
 (function (global) {
   'use strict';
 
@@ -283,6 +284,42 @@
     return cnt ? sum / cnt : 0;
   }
 
+  function medianAngle(boxes) {
+    var angles = boxes.map(function (b) { return b.angle; }).sort(function (a, b) { return a - b; });
+    return angles[Math.floor(angles.length / 2)];
+  }
+
+  /* 行の間が狭い表示では、膨らませた箱に上下の行の字が半分ずつ入り込んで読みが崩れた
+     (「エネルギー」→「工ネ」「羊一」、「48g」→「488」。2026-10-25 利用者の実機の写真)。
+     上下に重なる行があるときは、行の中心どうしの真ん中で箱を切る(この写真では高さ0.65倍で全部読めた)。
+     左右に並ぶ箱(見出しと数値)は重ならないので切らない */
+  function tightenLines(boxes) {
+    if (boxes.length < 2) return boxes;
+    var a = medianAngle(boxes), c = Math.cos(a), s = Math.sin(a);
+    var info = boxes.map(function (b) {
+      var rx = b.cx * c + b.cy * s;
+      return { ry: -b.cx * s + b.cy * c, x1: rx - b.w / 2, x2: rx + b.w / 2 };
+    });
+    return boxes.map(function (b, i) {
+      var me = info[i], top = me.ry - b.h / 2, bottom = me.ry + b.h / 2;
+      info.forEach(function (o, j) {
+        if (j === i) return;
+        var overlap = Math.min(me.x2, o.x2) - Math.max(me.x1, o.x1);
+        if (overlap < 0.3 * Math.min(me.x2 - me.x1, o.x2 - o.x1)) return;
+        // 同じ高さで重なる箱(二重に見つかった箱など)は上下の行ではない
+        if (Math.abs(o.ry - me.ry) < 0.4 * Math.min(b.h, boxes[j].h)) return;
+        var mid = (me.ry + o.ry) / 2;
+        if (o.ry < me.ry) top = Math.max(top, mid);
+        else bottom = Math.min(bottom, mid);
+      });
+      var h = bottom - top;
+      if (h >= b.h - 0.5) return b;
+      if (h < b.h * 0.5) { var keep = (b.h * 0.5 - h) / 2; top -= keep; bottom += keep; h = b.h * 0.5; }
+      var shift = (top + bottom) / 2 - me.ry;
+      return { cx: b.cx - shift * s, cy: b.cy + shift * c, w: b.w, h: h, angle: b.angle, score: b.score };
+    });
+  }
+
   /* 傾いた長方形を、まっすぐな横長の絵として切り出す */
   function cropBox(src, b) {
     var w = Math.max(1, Math.round(b.w)), h = Math.max(1, Math.round(b.h));
@@ -328,7 +365,25 @@
     feeds[eng.rec.inputNames[0]] = new eng.ort.Tensor('float32', data, [1, 3, REC_H, imgW]);
     return eng.rec.run(feeds).then(function (out) {
       var t = out[eng.rec.outputNames[0]];
-      return ctcDecode(t.data, t.dims[1], t.dims[2], eng.chars);
+      // 右の余白の分は確からしさの計算に入れない
+      return ctcDecode(t.data, t.dims[1], t.dims[2], eng.chars, Math.ceil(t.dims[1] * rw / imgW));
+    });
+  }
+
+  /* 自信の低い行は、箱の高さを変えて読み直し、いちばん確からしい読みを採る。
+     確からしさは「各時点のいちばん高い確率」の対数の平均(lp)。字が「区切り」に負けて抜けた読みは
+     その時点の確率が低いので、字を数えるだけの平均(conf)より読み比べに向く(実機の写真で確かめた) */
+  var RETRY_LP = -0.05, RETRY_H = [0.8, 1.2];
+  function recognizeBest(eng, src, b) {
+    return recognize(eng, cropBox(src, b)).then(function (first) {
+      if (first.lp >= RETRY_LP) return first;
+      var best = first;
+      return RETRY_H.reduce(function (chain, f) {
+        return chain.then(function () {
+          var alt = { cx: b.cx, cy: b.cy, w: b.w, h: b.h * f, angle: b.angle, score: b.score };
+          return recognize(eng, cropBox(src, alt)).then(function (r) { if (r.lp > best.lp) best = r; });
+        });
+      }, Promise.resolve()).then(function () { return best; });
     });
   }
 
@@ -349,14 +404,16 @@
     return out;
   }
 
-  function ctcDecode(probs, steps, classes, chars) {
-    var text = '', last = -1, sum = 0, n = 0;
+  function ctcDecode(probs, steps, classes, chars, used) {
+    var text = '', last = -1, sum = 0, n = 0, logSum = 0;
+    used = Math.max(1, Math.min(steps, used || steps));
     for (var t = 0; t < steps; t++) {
       var off = t * classes, best = 0, bestP = probs[off];
       for (var c = 1; c < classes; c++) {
         var v = probs[off + c];
         if (v > bestP) { bestP = v; best = c; }
       }
+      if (t < used) logSum += Math.log(Math.max(bestP, 1e-6));
       if (best !== 0 && best !== last) {
         text += chars[best] || '';
         sum += bestP;
@@ -364,7 +421,7 @@
       }
       last = best;
     }
-    return { text: text, conf: n ? sum / n : 0 };
+    return { text: text, conf: n ? sum / n : 0, lp: logSum / used };
   }
 
   /* ---------- 読んだ断片を行にまとめる ----------
@@ -373,8 +430,7 @@
   function assemble(items) {
     if (!items.length) return '';
     // 写真が傾いていると、同じ行の右端が下の行に見える。中央値の傾きでならしてから分ける
-    var angles = items.map(function (it) { return it.box.angle; }).sort(function (a, b) { return a - b; });
-    var a = angles[Math.floor(angles.length / 2)], c = Math.cos(a), s = Math.sin(a);
+    var a = medianAngle(items.map(function (it) { return it.box; })), c = Math.cos(a), s = Math.sin(a);
     items.forEach(function (it) {
       var b = it.box;
       it.ry = -b.cx * s + b.cy * c;
@@ -417,7 +473,7 @@
       return pause().then(function () { return detect(eng, src); }).then(function (boxes) {
         // 上から順に読む(上限を超えたら下は捨てる)
         boxes.sort(function (p, q) { return p.cy - q.cy || p.cx - q.cx; });
-        boxes = boxes.slice(0, MAX_BOXES);
+        boxes = tightenLines(boxes.slice(0, MAX_BOXES));
         var items = [], i = 0;
         function next() {
           if (i >= boxes.length) return Promise.resolve();
@@ -425,9 +481,9 @@
           stage('rec', i, boxes.length);
           // 1行ごとに画面へ制御を返し、進み具合の表示を更新させる
           return pause().then(function () {
-            return recognize(eng, cropBox(src, b));
+            return recognizeBest(eng, src, b);
           }).then(function (r) {
-            if (r.text.trim() && r.conf >= DROP_SCORE) items.push({ text: r.text, conf: r.conf, box: b });
+            if (r.text.trim() && r.conf >= DROP_SCORE) items.push({ text: r.text, conf: r.conf, lp: r.lp, box: b });
             return next();
           });
         }
@@ -736,6 +792,7 @@
     _detect: function (src) { return prepare().then(function (e) { return detect(e, src); }); },
     _recognize: function (crop) { return prepare().then(function (e) { return recognize(e, crop); }); },
     _cropBox: cropBox,
+    _tightenLines: tightenLines,
     _engine: function () { return engine; },
     _assemble: assemble,
     _minAreaRect: minAreaRect
