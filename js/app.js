@@ -38,13 +38,21 @@
      積んで覚えておく(数量入力から検索一覧へ戻り、続けて何品も追加できるように) */
   var sheetStack = [];
 
+  /* opts.fill: 高さを固定し、中身側でスクロール範囲を決める(食品追加の一覧など)
+     opts.tall: 一覧が後から読み込まれて伸び縮みする画面。fill と同じ形にして、中身を
+       スクロール用の枠(.sheet-scroll)で包む。高さの決まっていないシートの中身が後から増えると、
+       iPhoneではシートがスクロールせず後ろの画面が動いた(2026-10-25 バーコードを登録の画面)。
+       毎日使えている食品追加の一覧と同じ作り(高さ固定のシート＋中のスクロール枠)にそろえる */
   function openSheet(title, html, opts) {
     opts = opts || {};
     var sheet = document.getElementById('sheet');
     document.getElementById('sheetTitle').textContent = title || '';
-    var body = document.getElementById('sheetBody');
-    body.innerHTML = html || '';
-    body.scrollTop = 0;
+    // 中身の入れ物は画面ごとに作り直す。同じ要素の overflow や高さを切り替えて使い回すと
+    // スクロールの状態が前の画面から残ることがあり、入れ物に付けたリスナーも積み上がる
+    var old = document.getElementById('sheetBody');
+    var body = old.cloneNode(false);
+    old.parentNode.replaceChild(body, old);
+    body.innerHTML = opts.tall ? '<div class="sheet-scroll">' + (html || '') + '</div>' : (html || '');
     var act = document.getElementById('sheetAction');
     act.hidden = !opts.action;
     act.textContent = opts.action || '保存';
@@ -56,10 +64,10 @@
       cl.dataset.close = back ? 'back' : '1';
       cl.textContent = back ? '‹ 戻る' : '閉じる';
     }
-    // fill: 高さを固定し、中身側でスクロール範囲を決める(食品追加の一覧など)
     var panel = sheet.querySelector('.sheet-panel');
-    panel.classList.toggle('fill', !!opts.fill);
-    body.classList.toggle('fill', !!opts.fill);
+    var fixed = !!(opts.fill || opts.tall);
+    panel.classList.toggle('fill', fixed);
+    body.classList.toggle('fill', fixed);
     sheet.hidden = false;
     // シートが開いている間はフロートの追加ボタンを隠す
     document.body.classList.add('sheet-open');

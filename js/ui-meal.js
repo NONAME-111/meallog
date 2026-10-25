@@ -944,7 +944,7 @@
     var html = '<div class="row" style="margin-bottom:10px">' +
       '<input type="text" id="cq" placeholder="食品名で検索（例: さば、ごはん、納豆）" autocomplete="off">' +
       '</div><div id="cres"></div>';
-    var body = A().openSheet('セットに入れる食品', html);
+    var body = A().openSheet('セットに入れる食品', html, { tall: true });
     var q = body.querySelector('#cq');
     var out = body.querySelector('#cres');
 
@@ -1388,30 +1388,29 @@
         '<label class="fld" id="servWrap"><span>単位の呼び方</span>' +
           '<input type="text" id="mServ" value="' + A().esc(preset.servingLabel || '個') + '" placeholder="個 / 袋 / 食"></label>' +
       '</div>' +
-      /* 読み取りは iPhone 本体の文字認識にまかせる。長押しの「テキストをスキャン」なら
-         カメラが画面下半分に開き、読んだ文字がこの欄に直接入る。アプリとカメラを行き来せずに済む。
-         コピーして貼る道もあるが、行き来の分だけ遅いので逃げ道にとどめる */
+      /* 読み取りは v50 からアプリ内のカメラで行う(js/ocr.js)。撮影 → 表の部分を枠で囲む →
+         端末の中で文字認識 → 読んだ文字をこの欄に入れ、そのまま下の各欄へ写す。
+         iPhone の「テキストをスキャン」(欄を長押し →「自動入力」の中)はボタンから呼ぶ方法が無く、
+         毎回の長押しが手間だった(2026-10-25 利用者要望)ので、うまく読めないときの逃げ道に下げた */
       '<div class="card" id="ocrCard"><h3>栄養成分表示を読み取る</h3>' +
-        /* 今のiOSでは「テキストをスキャン」は、入力欄のメニューの「自動入力」の中にある
-           (2025-12の解説記事で確認)。利用者の実機でも、長押しのメニューは「ペースト」「自動入力」
-           だけだった(2026-09-23)ので、案内は「自動入力」→「テキストをスキャン」の順に書く */
-        '<div class="small" style="margin:0 2px 7px">' +
-        '下の欄を<b>長押し</b>して、メニューの<b>「自動入力」→「テキストをスキャン」</b>を押すとカメラが起動します。' +
-        '読み取った文字は<b>そのまま下の各欄に入ります</b>。</div>' +
-        // data-autofill="keep": 「連絡先を自動入力」対策(app.js の quietAutofill)の対象外。
-        // 「テキストをスキャン」は「自動入力」の中にあるので、この欄には手を入れない
-        '<textarea id="mOcr" class="ocr-input" rows="7" data-autofill="keep" ' +
-        'placeholder="ここを長押し →「自動入力」→「テキストをスキャン」"></textarea>' +
-        '<details class="nut-more" id="ocrTextBox">' +
-          '<summary>「テキストをスキャン」が出ないとき</summary>' +
+        '<button class="btn wide" id="mCam">📷 カメラで読み取る</button>' +
+        '<div class="small muted" style="margin:7px 2px 0">' +
+        '撮影したら表の部分を枠で囲み「この範囲を読み取る」を押すと、数値が下の各欄に入ります。</div>' +
+        '<div class="parse-result" id="mParseResult" role="status"></div>' +
+        '<details class="nut-more" id="ocrTextBox" style="margin-top:10px">' +
+          '<summary>読み取った文字（直して反映し直せます）</summary>' +
+          // data-autofill="keep": 「連絡先を自動入力」対策(app.js の quietAutofill)の対象外。
+          // 「テキストをスキャン」は「自動入力」の中にあるので、この欄には手を入れない
+          '<textarea id="mOcr" class="ocr-input" rows="7" data-autofill="keep" ' +
+          'placeholder="カメラで読み取った文字がここに入ります"></textarea>' +
+          /* 今のiOSでは「テキストをスキャン」は入力欄のメニューの「自動入力」の中にある(v48で判明) */
           '<div class="small muted" style="margin:0 2px 7px">' +
-          '標準カメラか写真アプリで文字を選んで「コピー」し、下のボタンを押してください。' +
-          '読み取りの精度は同じです。</div>' +
+          'iPhone の文字認識を使うときは、この欄を長押し →「自動入力」→「テキストをスキャン」。' +
+          '標準カメラや写真アプリでコピーした文字は「貼り付け」で入れられます。</div>' +
           '<div class="row" style="gap:8px">' +
             '<button class="btn line sm grow" id="mPaste">コピーした文字を貼り付け</button>' +
             '<button class="btn line sm grow" id="mParse">各欄へ反映する</button>' +
-          '</div></details>' +
-        '<div class="parse-result" id="mParseResult" role="status"></div></div>' +
+          '</div></details></div>' +
       '<div class="card"><h3>栄養成分</h3>' +
         '<div class="nut-edit-grid">' + nutrientFields(EDIT_MAIN, preset, initialEstKeys) + '</div>' +
         '<details class="nut-more"><summary>その他の栄養素</summary>' +
@@ -1496,11 +1495,12 @@
 
     var ocr = body.querySelector('#mOcr');
 
-    /* 読み取った文字を各欄へ写す。ボタンを押させず、文字が入った時点で自動で行う */
+    /* 読み取った文字を各欄へ写す。ボタンを押させず、文字が入った時点で自動で行う。
+       反映できた栄養素の数を返す */
     function applyOcr(auto) {
       var text = ocr.value;
       var result = body.querySelector('#mParseResult');
-      if (!text.trim()) { if (!auto) result.textContent = ''; return; }
+      if (!text.trim()) { if (!auto) result.textContent = ''; return 0; }
       var parsed = global.NutritionLabel.parse(text);
       parsed.foundKeys.forEach(function (key) {
         var input = body.querySelector('[data-nut="' + key + '"]');
@@ -1522,8 +1522,25 @@
             ? '見出しが読み取れなかったため、表示の並び順から当てはめています。'
             : '') +
           '数値が合っているか確認してください。'
-        : '読み取れる栄養素がありませんでした。明るい場所で、表の部分だけを大きく写してみてください。';
+        : '読み取れる栄養素がありませんでした。明るい場所で撮り直し、表の部分だけを枠で囲んでみてください。';
+      return parsed.foundKeys.length;
     }
+
+    /* アプリ内のカメラで読む(js/ocr.js)。読んだ文字は読み取り欄に入れて、各欄へ写す */
+    function startCam() {
+      if (!global.LabelCam) return;
+      global.LabelCam.open().then(function (text) {
+        if (!text) return;
+        ocr.value = text;
+        // 1つも反映できなかったときは、何と読んだかを見せる
+        if (!applyOcr(false)) body.querySelector('#ocrTextBox').open = true;
+        var res = body.querySelector('#mParseResult');
+        if (res) res.scrollIntoView({ block: 'center' });
+      });
+    }
+    body.querySelector('#mCam').addEventListener('click', startCam);
+    // 「パッケージの栄養成分表示を読み取る」から来たときは、すぐカメラを開く
+    if (preset.startCam) setTimeout(startCam, 60);
 
     var ocrTimer = 0;
     ocr.addEventListener('input', function () {
@@ -1677,7 +1694,7 @@
       '<div class="tiny muted" style="margin-bottom:8px">ビタミン・ミネラルの補完にだけ使います。' +
       'カロリーやPFCは手入力した値のままです。</div>' +
       '<div id="sres"></div>';
-    var body = A().openSheet('似た食材を選ぶ', html);
+    var body = A().openSheet('似た食材を選ぶ', html, { tall: true });
     var q = body.querySelector('#sq');
     var out = body.querySelector('#sres');
     var cache = {};
@@ -1783,7 +1800,7 @@
       '</div>' +
       '<button class="btn wide" id="wgo">検索する</button>' +
       '<div id="wres" style="margin-top:12px"></div>';
-    var body = A().openSheet('WEBで検索して取り込む', html);
+    var body = A().openSheet('WEBで検索して取り込む', html, { tall: true });
     var input = body.querySelector('#wq');
     var out = body.querySelector('#wres');
 
@@ -1853,17 +1870,18 @@
       '一度登録すれば、次からはこのバーコードを読むだけで呼び出せます。</div></div>' +
       '<button class="btn wide" id="bScanText">📷 パッケージの栄養成分表示を読み取る</button>' +
       '<div class="tiny muted" style="margin:7px 2px 12px">' +
-      '読み取り欄が開きます。その欄を長押し →「自動入力」→「テキストをスキャン」でカメラが起動し、' +
-      '写した数値がそのまま各欄に入ります</div>' +
+      'カメラが開きます。撮影したら表の部分を枠で囲み「この範囲を読み取る」を押すと、' +
+      '読んだ数値がそのまま各欄に入ります</div>' +
       '<button class="btn sub wide" id="bNew">数値を自分で入力して登録</button>' +
       '<div class="card" style="margin-top:12px"><h3>登録済みのマイ食品に紐づける</h3>' +
       '<input type="text" id="bq" placeholder="食品名で絞り込み" autocomplete="off">' +
       '<div id="blist" style="margin-top:8px"></div></div>';
-    var body = A().openSheet('バーコードを登録', html);
+    // マイ食品の一覧が後から入って伸びるので tall で開く(シートがスクロールしなかった。2026-10-25)
+    var body = A().openSheet('バーコードを登録', html, { tall: true });
 
     body.querySelector('#bScanText').addEventListener('click', function () {
-      // 読み取り欄のある画面を開く。撮影はiPhoneの「テキストをスキャン」に任せる
-      openManual(state, slot, { barcode: code, basis: 'serving', focusOcr: true });
+      // 手入力画面を開き、そのままアプリ内のカメラを起動する(読んだ文字は読み取り欄から各欄へ)
+      openManual(state, slot, { barcode: code, basis: 'serving', focusOcr: true, startCam: true });
     });
 
     body.querySelector('#bNew').addEventListener('click', function () {

@@ -692,7 +692,9 @@
 
   function showRichFoods(key) {
     var meta = F.meta(key);
-    A().openSheet(meta[0] + 'が多い食品', '<div class="empty">検索中…</div>');
+    // 一覧は後から入るので tall(高さ固定＋中のスクロール枠)で開く
+    var body = A().openSheet(meta[0] + 'が多い食品', '<div id="richList"><div class="empty">検索中…</div></div>',
+      { tall: true });
     F.load().then(function (db) {
       var list = db.foods.filter(function (food) { return food[key] != null && food[key] > 0 && food.kcal != null; });
       list.sort(function (a, b) { return b[key] - a[key]; });
@@ -701,7 +703,7 @@
           return '<div class="res"><b>' + A().esc(food.n) + '</b><span>' + meta[0] + ' ' + N.fmt(food[key]) + ' ' +
             meta[1] + ' ／ ' + Math.round(food.kcal) + ' kcal ／ ' + A().esc(F.groupName(food.g)) + '</span></div>';
         }).join('');
-      document.getElementById('sheetBody').innerHTML = html;
+      body.querySelector('#richList').innerHTML = html;
     });
   }
 

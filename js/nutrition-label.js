@@ -2,14 +2,19 @@
 (function (global) {
   'use strict';
 
+  /* アプリ内の文字認識(v50)は、小さい字やぼけた写真で「ぱ」を「ば」、長音の「ー」を漢字の「一」と
+     読んだり、字を1つ落としたりする(「炭水化物」→「炭化物」「食塩相当量」→「塩相当量」。合成画像で実測)。
+     見出しが外れると数値も捨てられるので、見出しの芯になる字が残っていれば受け取る。
+     ・脂質: 「脂」の次が「肪」のとき(飽和脂肪酸など)は脂質にしない
+     ・炭水化物: 「炭」と「物」の間は2文字まで */
   var RULES = [
-    { key: 'kcal', names: ['エネルギー', '熱量'], unit: 'kcal' },
-    { key: 'protein', names: ['たんぱく質', 'タンパク質', '[^\s0-9]白質'], unit: 'g' },
-    { key: 'fat', names: ['脂質'], unit: 'g' },
-    { key: 'carb', names: ['炭水化物'], unit: 'g' },
+    { key: 'kcal', names: ['エネルギ[ー一―-]?', '熱量'], unit: 'kcal' },
+    { key: 'protein', names: ['たん[ぱばはぽ]?く質', 'タン[パバ]ク質', '[^\s0-9]白質'], unit: 'g' },
+    { key: 'fat', names: ['脂[^\\s0-9肪]?'], unit: 'g' },
+    { key: 'carb', names: ['炭[^\\s0-9]{0,2}物'], unit: 'g' },
     { key: '_labelSugar', names: ['糖質'], unit: 'g' },
-    { key: 'fiber', names: ['食物繊維'], unit: 'g' },
-    { key: 'salt', names: ['食塩相当[量重畳]', '食塩相当'], unit: 'g' },
+    { key: 'fiber', names: ['食物[^\\s0-9]{0,2}'], unit: 'g' },
+    { key: 'salt', names: ['食?塩相当[量重畳]?'], unit: 'g' },
     { key: 'sodium', names: ['ナトリウム'], unit: 'mg' },
     { key: 'satfat', names: ['飽和脂肪酸'], unit: 'g' },
     { key: 'monofat', names: ['一価不飽和脂肪酸', '一価不飽和'], unit: 'g' },
@@ -38,9 +43,19 @@
   var CJK = '\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uff66-\\uff9f';
   var CJK_SPACE = new RegExp('([' + CJK + '])[ \\t]+(?=[' + CJK + '])', 'g');
 
+  /* アプリ内の文字認識(PP-OCRv5)は中国語の字も読むモデルなので、小さい字では日本の字を
+     形の似た中国の字に読み違える(「脂質」→「脂货」「食物繊維」→「食物織雜」。合成画像で実測)。
+     栄養成分表示に出てくる字に限って、日本の字へ戻す */
+  var LOOKALIKE = {
+    '质': '質', '货': '質', '賃': '質', '纤': '繊', '纖': '繊', '織': '繊', '维': '維', '雜': '維',
+    '盐': '塩', '鹽': '塩', '热': '熱', '當': '当', '铁': '鉄', '鐵': '鉄', '饱': '飽', '价': '価', '叶': '葉'
+  };
+  var LOOKALIKE_RE = new RegExp('[' + Object.keys(LOOKALIKE).join('') + ']', 'g');
+
   function normalize(text) {
     text = String(text || '');
     if (text.normalize) text = text.normalize('NFKC');
+    text = text.replace(LOOKALIKE_RE, function (ch) { return LOOKALIKE[ch]; });
     text = text
       .replace(/[µμ]/g, 'u')
       .replace(/[：]/g, ':')
@@ -133,12 +148,13 @@
   }
 
   function portion(text) {
-    var hundred = text.match(/(?:栄養成分表示\s*)?100\s*g\s*(?:当たり|あたり)/i);
+    // 「当り」と送り仮名を省いた表示もある(文字認識が「た」を落とすこともある)
+    var hundred = text.match(/(?:栄養成分表示\s*)?100\s*g\s*(?:当たり|当り|あたり)/i);
     if (hundred) return { basis: '100g', servingLabel: '', grams: 100 };
     /* 内容量は「1袋(50g)当たり」「1袋50g当たり」のどちらの書き方もある。
        飲み物は「1本(200ml)当たり」のようにmLで書かれるので、そちらも受け取る。
        ただし **mLは重さではない** ので、grams は空のままにする */
-    var m = text.match(/(?:栄養成分表示\s*)?(?:1\s*)?(日分|袋|本|缶|個|食|パック|包|粒|錠|枚|杯|人前)\s*(?:[（(]?\s*([0-9]+(?:\.[0-9]+)?)\s*(g|ml|cc)\s*[）)]?)?\s*(?:当たり|あたり)/i);
+    var m = text.match(/(?:栄養成分表示\s*)?(?:1\s*)?(日分|袋|本|缶|個|食|パック|包|粒|錠|枚|杯|人前)\s*(?:[（(]?\s*([0-9]+(?:\.[0-9]+)?)\s*(g|ml|cc)\s*[）)]?)?\s*(?:当たり|当り|あたり)/i);
     if (!m) return { basis: null, servingLabel: null, grams: null };
     var isGram = m[3] && m[3].toLowerCase() === 'g';
     return { basis: 'serving', servingLabel: m[1], grams: isGram ? parseFloat(m[2]) : null };

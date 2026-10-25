@@ -453,6 +453,9 @@ canvas.chart{width:100%;height:190px;display:block}
 .add-fixed{flex:none}
 .add-scroll{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
   padding:2px 0 14px;overscroll-behavior:contain}
+/* openSheet の tall。一覧が後から読み込まれる画面も、上の一覧と同じ形でスクロールさせる */
+.sheet-scroll{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding-bottom:14px;overscroll-behavior:contain}
 
 /* ---- スキャナ ---- */
 .scanner{position:fixed;inset:0;z-index:80;background:#000}
@@ -491,11 +494,46 @@ body.sheet-open .fab-wrap{display:none}
 .fab-done{position:absolute;top:2px;right:3px;width:15px;height:15px;border-radius:50%;
   background:var(--judge-ok);color:#fff;font-size:10px;font-weight:700;line-height:15px;text-align:center}
 
-/* ---- 栄養成分表示の読み取り ---- */
-/* 読み取りは iPhone 本体の文字認識（入力欄の「テキストをスキャン」）に任せるので、
-   アプリ側の撮影画面は v37 で廃止した。残っているのは手入力画面の読み取り欄だけ */
-.ocr-foot .btn{background:var(--green);color:#fff}
-.ocr-foot .btn:disabled{opacity:.4}
+/* ---- 栄養成分表示の読み取り(v50: アプリ内のカメラ＋読む範囲を枠で囲む。js/ocr.js) ----
+   v37 でアプリ内の撮影を一度やめた(Tesseract では読めなかった)。文字認識を PP-OCRv5 に替えて戻した。
+   撮影画面はカメラの映像と同じく暗い画面に固定する(ライト/ダークで変えない) */
+body.lcam-open{overflow:hidden}
+.lcam{position:fixed;inset:0;z-index:85;background:#000;color:#fff;display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top);touch-action:none;overscroll-behavior:contain}
+.lcam[hidden],.lcam [hidden]{display:none!important}
+.lcam-top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:8px 12px}
+.lcam-top b{font-size:14px}
+.lcam-top .scan-btn{justify-self:start}
+.lcam-stage{position:relative;flex:1;min-height:0;overflow:hidden;-webkit-user-select:none;user-select:none}
+.lcam-stage video,.lcam-stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+/* 囲んだ外側を暗くして、読む範囲を分かりやすくする */
+.lcam-crop{position:absolute;border:2px solid #fff;border-radius:4px;box-shadow:0 0 0 100vmax rgba(0,0,0,.5)}
+/* 角のつまみ。見た目はL字、指でつかめる範囲は44px四方 */
+.lcam-crop i{position:absolute;width:44px;height:44px}
+.lcam-crop i::before{content:"";position:absolute;width:20px;height:20px;border:0 solid #fff}
+.lcam-crop i[data-h=nw]{left:-22px;top:-22px}
+.lcam-crop i[data-h=ne]{right:-22px;top:-22px}
+.lcam-crop i[data-h=sw]{left:-22px;bottom:-22px}
+.lcam-crop i[data-h=se]{right:-22px;bottom:-22px}
+.lcam-crop i[data-h=nw]::before{left:19px;top:19px;border-left-width:5px;border-top-width:5px}
+.lcam-crop i[data-h=ne]::before{right:19px;top:19px;border-right-width:5px;border-top-width:5px}
+.lcam-crop i[data-h=sw]::before{left:19px;bottom:19px;border-left-width:5px;border-bottom-width:5px}
+.lcam-crop i[data-h=se]::before{right:19px;bottom:19px;border-right-width:5px;border-bottom-width:5px}
+.lcam-busy{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:14px;padding:0 20px;background:rgba(0,0,0,.62);font-size:14px;line-height:1.6;
+  text-align:center;white-space:pre-line}
+.lcam-spin{width:38px;height:38px;border-radius:50%;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;
+  animation:lcamSpin .9s linear infinite}
+@keyframes lcamSpin{to{transform:rotate(360deg)}}
+.lcam-msg{min-height:46px;padding:8px 14px 0;font-size:13px;line-height:1.5;text-align:center}
+.lcam-bar{display:flex;align-items:center;gap:12px;padding:10px 14px calc(14px + env(safe-area-inset-bottom))}
+/* シャッターは真ん中に置く(左は「写真から選ぶ」、右は空き) */
+#lcamLive{display:grid;grid-template-columns:1fr auto 1fr}
+#lcamLive .scan-btn{justify-self:start}
+.lcam-shutter{width:70px;height:70px;border-radius:50%;background:#fff;
+  box-shadow:0 0 0 4px #000,0 0 0 7px rgba(255,255,255,.85)}
+.lcam-shutter:active{transform:scale(.94)}
+.lcam-go{flex:1;min-height:48px;border-radius:12px;background:var(--green);color:#fff;font-weight:700;font-size:15px}
 
 /* ---- トースト ---- */
 .toast{position:fixed;left:50%;bottom:calc(var(--tabh) + 14px);transform:translateX(-50%);

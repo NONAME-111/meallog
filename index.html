@@ -4,16 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#147a4b">
-<meta name="application-version" content="v49 / Claude ver41">
+<meta name="application-version" content="v50 / Claude ver42">
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="ミール">
 <title>ミールログ</title>
-<link rel="manifest" href="manifest.webmanifest?v=20261023-49">
-<link rel="apple-touch-icon" href="icons/icon-180.png?v=20261023-49">
-<link rel="icon" type="image/png" href="icons/favicon-64.png?v=20261023-49">
-<link rel="stylesheet" href="css/style.css?v=20261023-49">
+<link rel="manifest" href="manifest.webmanifest?v=20261025-50">
+<link rel="apple-touch-icon" href="icons/icon-180.png?v=20261025-50">
+<link rel="icon" type="image/png" href="icons/favicon-64.png?v=20261025-50">
+<link rel="stylesheet" href="css/style.css?v=20261025-50">
 </head>
 <body>
 
@@ -61,21 +61,48 @@
   <input type="file" id="scanFile" accept="image/*" hidden>
 </div>
 
+<!-- 栄養成分表示の読み取り(撮影 → 表を枠で囲む → 端末の中で文字認識。js/ocr.js) -->
+<div id="labelCam" class="lcam" hidden>
+  <div class="lcam-top">
+    <button id="lcamClose" class="scan-btn">閉じる</button>
+    <b>栄養成分表示を読み取る</b>
+    <span class="lcam-pad"></span>
+  </div>
+  <div id="lcamStage" class="lcam-stage">
+    <video id="lcamVideo" playsinline muted></video>
+    <canvas id="lcamShot" hidden></canvas>
+    <div id="lcamCrop" class="lcam-crop"><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div>
+    <div id="lcamBusy" class="lcam-busy" hidden><div class="lcam-spin"></div><div id="lcamBusyMsg"></div></div>
+  </div>
+  <div id="lcamMsg" class="lcam-msg" role="status"></div>
+  <div id="lcamLive" class="lcam-bar">
+    <button id="lcamPick" class="scan-btn">写真から選ぶ</button>
+    <button id="lcamShutter" class="lcam-shutter" aria-label="撮影"></button>
+    <span class="lcam-pad"></span>
+  </div>
+  <div id="lcamEdit" class="lcam-bar" hidden>
+    <button id="lcamRetake" class="scan-btn">撮り直す</button>
+    <button id="lcamRead" class="lcam-go">この範囲を読み取る</button>
+  </div>
+  <input type="file" id="lcamFile" accept="image/*" hidden>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 
-<script src="js/store.js?v=20261023-49"></script>
-<script src="js/foods.js?v=20261023-49"></script>
-<script src="js/estimate.js?v=20261023-49"></script>
-<script src="js/nutrition.js?v=20261023-49"></script>
-<script src="js/nutrition-label.js?v=20261023-49"></script>
-<script src="js/barcode.js?v=20261023-49"></script>
-<script src="js/drum.js?v=20261023-49"></script>
-<script src="js/ui-meal.js?v=20261023-49"></script>
-<script src="js/steps.js?v=20261023-49"></script>
-<script src="js/ui-body.js?v=20261023-49"></script>
-<script src="js/ui-graph.js?v=20261023-49"></script>
-<script src="js/ui-advice.js?v=20261023-49"></script>
-<script src="js/ui-settings.js?v=20261023-49"></script>
-<script src="js/app.js?v=20261023-49"></script>
+<script src="js/store.js?v=20261025-50"></script>
+<script src="js/foods.js?v=20261025-50"></script>
+<script src="js/estimate.js?v=20261025-50"></script>
+<script src="js/nutrition.js?v=20261025-50"></script>
+<script src="js/nutrition-label.js?v=20261025-50"></script>
+<script src="js/barcode.js?v=20261025-50"></script>
+<script src="js/ocr.js?v=20261025-50"></script>
+<script src="js/drum.js?v=20261025-50"></script>
+<script src="js/ui-meal.js?v=20261025-50"></script>
+<script src="js/steps.js?v=20261025-50"></script>
+<script src="js/ui-body.js?v=20261025-50"></script>
+<script src="js/ui-graph.js?v=20261025-50"></script>
+<script src="js/ui-advice.js?v=20261025-50"></script>
+<script src="js/ui-settings.js?v=20261025-50"></script>
+<script src="js/app.js?v=20261025-50"></script>
 </body>
 </html>
