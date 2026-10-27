@@ -530,8 +530,23 @@
   function offReady() { return !!OFF; }
 
   /* ---- 外食チェーンのメニュー(app/data/menu-items.json) ----
-     45KBと小さいので、検索のときにまとめて読む。1行 = [店名, 商品名, 単位, 栄養素, 備考] */
+     検索のときにまとめて読む。1行 = [店名, 商品名, 単位, 栄養素, 備考] */
   var MENU = null, menuLoading = null;
+
+  /* 店のよく使う呼び方。検索の手がかり(key)に足すだけで、表示は正式な店名のまま(v52) */
+  var SHOP_ALIAS = {
+    'スターバックス': 'スタバ starbucks',
+    'タリーズコーヒー': 'tullys',
+    'ドトールコーヒーショップ': 'doutor',
+    'エクセルシオール カフェ': 'エクセル ドトール',
+    'マクドナルド': 'マック マクド',
+    'ラーメン山岡家': '山岡家',
+    'リンガーハット': '長崎ちゃんぽん',
+    '日高屋': 'ハイデイ日高'
+  };
+  function menuKey(shop, name) {
+    return norm(shop + ' ' + (SHOP_ALIAS[shop] || '') + ' ' + name);
+  }
 
   function loadMenu() {
     if (MENU) return Promise.resolve(MENU);
@@ -543,7 +558,7 @@
     };
     /* 公式の公表値(menu-items.json)と、非公式の出典(FatSecret・個人サイト)を合わせて読む。
        非公式は official:false を立て、画面で必ず「非公式」と出典が分かるようにする。
-       先読みするのは公式のぶんだけ(非公式は266KBあるので、検索したときに読む) */
+       どちらも検索したときに読む(v52で公式が約0.7MB・非公式が約0.4MBになり、先読みをやめた) */
     menuLoading = Promise.all([
       get('data/menu-items.json'),
       get('data/menu-items-unofficial.json')
@@ -553,7 +568,7 @@
         list.push({
           i: list.length, shop: row[0], name: row[1], unit: row[2] || '食',
           nut: row[3] || {}, note: row[4] || '', official: true,
-          key: norm(row[0] + ' ' + row[1])
+          key: menuKey(row[0], row[1])
         });
       });
       (r[1].items || []).forEach(function (row) {
@@ -561,7 +576,7 @@
           i: list.length, shop: row[0], name: row[1], unit: '食',
           nut: row[3] || {}, note: row[2] || '', official: false,
           src: row[4] || 'FatSecret・利用者投稿',
-          key: norm(row[0] + ' ' + row[1])
+          key: menuKey(row[0], row[1])
         });
       });
       MENU = {
@@ -581,11 +596,16 @@
       if (!queryTerms(text).length) return [];
       var match = nameMatcher(text);
       var hit = [];
-      for (var i = 0; i < db.list.length && hit.length < (limit || 12) * 3; i++) {
+      /* v52でカフェのサイズ・ミルク違いが入り、1つの語で数百品に当たるようになった。
+         途中で打ち切らず(上限400)、公式を先に、名前の短い品(=言葉に近い品)を先に出す。
+         打ち切っていたころは「スタバ ラテ トール」で季節の品のミルク違いだけが並び、
+         定番の「スターバックス ラテ」が出なかった */
+      for (var i = 0; i < db.list.length && hit.length < 400; i++) {
         if (match(db.list[i].key, true)) hit.push(db.list[i]);
       }
-      // 公式の公表値を先に出す
-      hit.sort(function (a, b) { return (b.official ? 1 : 0) - (a.official ? 1 : 0); });
+      hit.sort(function (a, b) {
+        return ((b.official ? 1 : 0) - (a.official ? 1 : 0)) || (a.name.length - b.name.length) || (a.i - b.i);
+      });
       return hit.slice(0, limit || 12);
     });
   }
