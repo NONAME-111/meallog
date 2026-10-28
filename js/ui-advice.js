@@ -62,8 +62,12 @@
       .then(function () { bind(view, state); });
   }
 
+  /* 食品区分の判定に要る成分表(約1MB)などを読む。一度読めたら使い回す(描くたびに作り直さない)。
+     読めなかったときは次に呼ばれたときにやり直す */
+  var sourcePrep = null, sourceIsReady = false;
   function prepareSourceClassification() {
-    return Promise.all([F.load(), F.loadProducts(), F.loadCategories(), global.Estimate.load()]).then(function (r) {
+    if (sourcePrep) return sourcePrep;
+    sourcePrep = Promise.all([F.load(), F.loadProducts(), F.loadCategories(), global.Estimate.load()]).then(function (r) {
       sourceFoodById = {};
       (r[0].foods || []).forEach(function (food) { sourceFoodById[food.id] = food; });
       sourceSweetRules = (r[2].rules || []).filter(function (rule) {
@@ -74,7 +78,10 @@
           not: (rule.not || []).map(F.norm).filter(Boolean)
         };
       });
+      sourceIsReady = true;
     });
+    sourcePrep.catch(function () { sourcePrep = null; });
+    return sourcePrep;
   }
 
   function segHtml() {
@@ -712,6 +719,7 @@
     _activityFor: activityFor,
     _addActivity: addActivity,
     _prepareSourceClassification: prepareSourceClassification,
+    _sourceReady: function () { return sourceIsReady; },
     _sourceBreakdown: sourceBreakdown,
     _entrySourceType: entrySourceType
   };

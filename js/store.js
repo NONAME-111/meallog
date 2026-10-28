@@ -6,11 +6,30 @@
   var DB_NAME = 'meallog';
   var DB_VER = 4;   // 4: 読み取った商品の控え(products)を追加
   var dbp = null;
+  /* iPhone では、アプリを裏に回して時間がたつと端末内のデータベースへの接続が切れ、
+     「Connection to Indexed Database server lost」(UnknownError)が返ったり、開く要求が
+     いつまでも返ってこなかったりする。起動のときにこれが起きると、記録画面が描かれないまま
+     止まっていた(v53)。5秒で返ってこなければ失敗として扱い、run() が開き直す */
+  var OPEN_TIMEOUT_MS = 5000;
 
   function open() {
     if (dbp) return dbp;
-    dbp = new Promise(function (resolve, reject) {
-      var req = indexedDB.open(DB_NAME, DB_VER);
+    var p = new Promise(function (resolve, reject) {
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        reject(new Error('IndexedDB open timeout'));
+      }, OPEN_TIMEOUT_MS);
+      var req;
+      try {
+        req = indexedDB.open(DB_NAME, DB_VER);
+      } catch (e) {
+        settled = true;
+        clearTimeout(timer);
+        reject(e);
+        return;
+      }
       req.onupgradeneeded = function (ev) {
         var db = req.result;
         if (!db.objectStoreNames.contains('entries')) {
@@ -50,23 +69,43 @@
       };
       req.onsuccess = function () {
         var db = req.result;
+        if (settled) { db.close(); return; }   // 待ちきれずに諦めたあとで開いた接続は使わない
+        settled = true;
+        clearTimeout(timer);
         // iOS が長時間バックグラウンド後に接続を閉じる問題への備え
-        db.onclose = function () { dbp = null; };
+        db.onclose = function () { if (dbp === p) dbp = null; };
         resolve(db);
       };
-      req.onerror = function () { reject(req.error); };
+      req.onerror = function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(req.error);
+      };
     });
-    return dbp;
+    dbp = p;
+    // 失敗した接続を使い回さない(次の呼び出しで開き直す)
+    p.catch(function () { if (dbp === p) dbp = null; });
+    return p;
   }
 
-  // closing 検出時に一度だけ再接続してリトライする
+  /* 接続が切れた系の失敗なら、開き直して1回だけやり直す。
+     以前は「closing」「InvalidStateError」だけを見ていて、iPhone の
+     「Connection to Indexed Database server lost」(UnknownError)と開けないまま止まる場合を素通りしていた */
+  function retryable(err) {
+    var name = String((err && err.name) || '');
+    var msg = String((err && err.message) || err);
+    return /closing|InvalidStateError|lost|UnknownError|timeout/i.test(name + ' ' + msg);
+  }
+
   function run(storeNames, mode, fn) {
     return open().then(function (db) {
       return exec(db, storeNames, mode, fn);
     }).catch(function (err) {
-      var msg = String((err && err.message) || err);
-      if (msg.indexOf('closing') === -1 && msg.indexOf('InvalidStateError') === -1) throw err;
+      if (!retryable(err)) throw err;
+      var old = dbp;
       dbp = null;
+      if (old) old.then(function (db) { try { db.close(); } catch (e) { void e; } }, function () {});
       return open().then(function (db) { return exec(db, storeNames, mode, fn); });
     });
   }

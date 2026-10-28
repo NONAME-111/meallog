@@ -171,8 +171,10 @@
     }
     rendering = true;
     return Promise.resolve(v.render(view, state)).catch(function (err) {
+      // 端末内のデータベースへの接続が切れたときなどは、読み込み直せば戻ることが多い(v53)
       view.innerHTML = '<div class="card"><b>表示エラー</b><div class="small muted">' +
-        esc(String((err && err.message) || err)) + '</div></div>';
+        esc(String((err && err.message) || err)) + '</div>' +
+        '<button class="btn wide" style="margin-top:10px" onclick="location.reload()">読み込み直す</button></div>';
     }).then(function () {
       rendering = false;
       if (pending) {
@@ -299,18 +301,23 @@
     // 日付の上に版を小さく出す(更新が届いたかを、設定の一番下まで見に行かずに確かめられる)
     var hdrVer = document.getElementById('hdrVer');
     if (hdrVer) hdrVer.textContent = version();
-    S.migrateToilet().then(function () {
-      return S.migrateExerciseGoal();
+    /* 起動の手順はどれか1つが失敗しても先へ進め、必ず画面を描く(v53)。
+       v52までは移行や設定の読み出しが失敗すると(iPhoneでデータベースへの接続が切れたときなど)、
+       記録画面が描かれないまま止まっていた */
+    var soft = function (p) { return p.catch(function (e) { void e; return null; }); };
+    soft(S.migrateToilet()).then(function () {
+      return soft(S.migrateExerciseGoal());
     }).then(function () {
       // 初回オフライン等で成分表を読めない場合も起動は続け、次回また試す。
-      return S.migrateChickenLiver().catch(function () { return null; });
+      return soft(S.migrateChickenLiver());
     }).then(function (result) {
       liverMigration = result;
       // 記録済みの果物にビタミンなどを補う(一度だけ)。成分表を読めない場合は次回また試す
-      return S.migrateFruitEstimate().catch(function () { return null; });
+      return soft(S.migrateFruitEstimate());
     }).then(function (result) {
       fruitMigration = result;
-      return reloadSettings();
+      // 設定が読めないときは記録画面で起動し、一度だけの重い後片付け(食べなかった埋め)は次回に回す
+      return reloadSettings().catch(function () { return { lastTab: 'meal', skipBackfilled: 1 }; });
     }).then(function (st) {
       state.tab = st.lastTab || 'meal';
       Array.prototype.forEach.call(document.querySelectorAll('#tabbar .tab'), function (b) {
@@ -342,15 +349,21 @@
       global.Steps.receiveUrl().then(function (count) {
         if (count) { toast(count + '日分の歩数を取り込みました', 3500); render(); }
       }).catch(function (e) { toast('歩数を取り込めませんでした: ' + e.message, 5000); });
-      // 食品DBは先読みしておく
-      global.Foods.load().catch(function (e) {
-        toast('食品データベースの読み込みに失敗しました');
-        void e;
-      });
-      // かな検索用の読み表と、商品ごとの栄養マスタ(どちらも無くても動く)
-      global.Foods.loadYomi();
-      global.Foods.loadProducts();
-      global.Estimate.load().catch(function (e) { void e; });
+      /* 食品DB(成分表 約1MB)・推定の辞書・かなの読み表・商品マスタは、画面を出してから裏で読む。
+         記録画面の色分けが成分表を待つので、まず成分表から。残りは少し間を置いて1つずつ読み、
+         起動直後に重い処理が重なって操作が固まらないようにする(v53) */
+      setTimeout(function () {
+        global.Foods.load().catch(function (e) {
+          toast('食品データベースの読み込みに失敗しました');
+          void e;
+        }).then(function () {
+          return global.Estimate.load().catch(function (e) { void e; });
+        }).then(function () {
+          // かな検索用の読み表と、商品ごとの栄養マスタ(どちらも無くても動く)
+          global.Foods.loadYomi();
+          global.Foods.loadProducts();
+        });
+      }, 300);
       // 取り込んだ過去日の未記録を「食べなかった」で一度だけ埋める
       if (!st.skipBackfilled) {
         S.backfillSkipped().then(function (res) {

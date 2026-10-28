@@ -52,24 +52,35 @@
       // PFCが0のままになるので、その理由を出す
       var real = entries.filter(S.notSkip);
       var noPfc = real.filter(function (e) { return !hasPfc(e.nutrients); }).length;
-      var sourceReady = Views.advice && Views.advice._prepareSourceClassification
-        ? Views.advice._prepareSourceClassification() : Promise.resolve();
-      return sourceReady.catch(function () { return null; }).then(function () {
-        var sources = Views.advice && Views.advice._sourceBreakdown
-          ? Views.advice._sourceBreakdown(real, totals) : null;
-        var html = summaryHtml(totals, tg, burned,
-          (!dt.imported && noPfc) ? noPfc : 0, real.length, sources);
-        SLOTS.forEach(function (sl) {
-          html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }), linkedNames,
-            mealTimes[sl.key] || '');
-        });
-        html += exerciseHtml(exercises, burned, activity);
-        html += fabHtml(entries);
-        html += '<div class="tiny muted" style="padding:4px 2px 0">栄養値の出典: ' +
-          A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') + '</div>';
-        view.innerHTML = html;
-        bind(view, state);
+      /* 食品区分(お菓子・お酒など)の色分けには、成分表(約1MB)・商品マスタ・区分の辞書の読み込みが要る。
+         v52まではそれを読み終えるまで記録画面を出さず、起動が遅かった。
+         v53から先に画面を出し(読めるまでは棒を全部「通常食品」の色で出す)、読めたら棒だけ描き直す */
+      var adv = Views.advice || {};
+      var ready = !!(adv._sourceReady && adv._sourceReady());
+      var sources = ready && adv._sourceBreakdown ? adv._sourceBreakdown(real, totals) : null;
+      var html = summaryHtml(totals, tg, burned,
+        (!dt.imported && noPfc) ? noPfc : 0, real.length, sources);
+      SLOTS.forEach(function (sl) {
+        html += slotHtml(sl, entries.filter(function (e) { return e.slot === sl.key; }), linkedNames,
+          mealTimes[sl.key] || '');
       });
+      html += exerciseHtml(exercises, burned, activity);
+      html += fabHtml(entries);
+      html += '<div class="tiny muted" style="padding:4px 2px 0">栄養値の出典: ' +
+        A().esc(F.source() || '日本食品標準成分表(八訂)増補2023年 / 文部科学省') + '</div>';
+      view.innerHTML = html;
+      bind(view, state);
+      if (!ready && adv._prepareSourceClassification) {
+        adv._prepareSourceClassification().then(function () {
+          // 待っているあいだに画面が描き替わっていたら何もしない(新しい画面は自分で色分けする)
+          var bar = view.isConnected && view.querySelector('.summary-source-panel .bar.source-stack');
+          if (!bar) return;
+          var kcal = Math.round(totals.kcal || 0), goal = tg.kcal.goal;
+          var tmp = document.createElement('div');
+          tmp.innerHTML = summarySourceBar(adv._sourceBreakdown(real, totals), kcal, goal, kcal - burned > goal);
+          bar.parentNode.replaceChild(tmp.firstChild, bar);
+        }).catch(function (e) { void e; });   // 読めなければ全部「通常食品」の色のまま
+      }
     });
   }
 
