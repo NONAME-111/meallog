@@ -485,14 +485,14 @@
     if (PROD) return Promise.resolve(PROD);
     if (prodLoading) return prodLoading;
     prodLoading = fetch('data/product-nutrients.json')
-      .then(function (r) { return r.ok ? r.json() : { items: [] }; })
+      .then(function (r) { if (!r.ok) throw new Error('商品データを読み込めませんでした'); return r.json(); })
       .then(function (j) {
         var map = {};
         (j.items || []).forEach(function (it) { map[norm(it.n)] = it; });
         PROD = { map: map, count: (j.items || []).length };
         return PROD;
       })
-      .catch(function () { PROD = { map: {}, count: 0 }; return PROD; });
+      .catch(function (e) { prodLoading = null; throw e; });
     return prodLoading;
   }
 
@@ -529,8 +529,8 @@
 
   function offReady() { return !!OFF; }
 
-  /* ---- 外食チェーンのメニュー(app/data/menu-items.json) ----
-     検索のときにまとめて読む。1行 = [店名, 商品名, 単位, 栄養素, 備考] */
+  /* ---- 外食チェーンのメニュー ----
+     menu-index.json の名前を検索し、候補の data/menus/ だけ取得する(v54)。 */
   var MENU = null, menuLoading = null;
 
   /* 店のよく使う呼び方。検索の手がかり(key)に足すだけで、表示は正式な店名のまま(v52) */
@@ -551,67 +551,108 @@
   function loadMenu() {
     if (MENU) return Promise.resolve(MENU);
     if (menuLoading) return menuLoading;
-    var blank = { items: [], sources: [] };
-    var get = function (url) {
-      return fetch(url).then(function (r) { return r.ok ? r.json() : blank; })
-        .catch(function () { return blank; });
-    };
-    /* 公式の公表値(menu-items.json)と、非公式の出典(FatSecret・個人サイト)を合わせて読む。
-       非公式は official:false を立て、画面で必ず「非公式」と出典が分かるようにする。
-       どちらも検索したときに読む(v52で公式が約0.7MB・非公式が約0.4MBになり、先読みをやめた) */
-    menuLoading = Promise.all([
-      get('data/menu-items.json'),
-      get('data/menu-items-unofficial.json')
-    ]).then(function (r) {
-      var list = [];
-      (r[0].items || []).forEach(function (row) {
-        list.push({
-          i: list.length, shop: row[0], name: row[1], unit: row[2] || '食',
-          nut: row[3] || {}, note: row[4] || '', official: true,
-          key: menuKey(row[0], row[1])
-        });
+    // 名前だけの索引を検索時に読み、栄養値は候補の店の分だけ読む(v54)。
+    menuLoading = menuJson('data/menu-index.json').then(function (data) {
+      if (data.schema !== 2 || !Array.isArray(data.items)) throw new Error('メニュー索引の形式が違います');
+      var list = [], at = 0;
+      function build() {
+        var stop = Math.min(at + 300, data.items.length);
+        for (; at < stop; at++) {
+          var row = data.items[at], source = data.sources[row[0]];
+          list.push({ i: at, shop: source.shop, name: row[1], official: source.official,
+            source: row[0], row: row[3], key: menuKey(source.shop, row[1]) });
+        }
+        return at < data.items.length ? pause().then(build) : Promise.resolve();
+      }
+      return build().then(function () {
+        MENU = { list: list, sources: data.sources, count: list.length };
+        return MENU;
       });
-      (r[1].items || []).forEach(function (row) {
-        list.push({
-          i: list.length, shop: row[0], name: row[1], unit: '食',
-          nut: row[3] || {}, note: row[2] || '', official: false,
-          src: row[4] || 'FatSecret・利用者投稿',
-          key: menuKey(row[0], row[1])
-        });
-      });
-      MENU = {
-        list: list,
-        sources: (r[0].sources || []).concat(r[1].sources || []),
-        count: list.length
-      };
-      return MENU;
-    }).catch(function () { MENU = { list: [], sources: [], count: 0 }; return MENU; });
+    }).catch(function (e) { menuLoading = null; throw e; });
     return menuLoading;
   }
 
-  function menuSearch(text, limit) {
+  function pause() { return new Promise(function (resolve) { setTimeout(resolve, 0); }); }
+  function menuJson(url) {
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer;
+    var timeout = new Promise(function (_, reject) {
+      timer = setTimeout(function () {
+        if (controller) controller.abort();
+        reject(new Error('メニューを読み込めませんでした。通信後に再検索してください'));
+      }, 12000);
+    });
+    var request = fetch(url, controller ? { signal: controller.signal } : {}).then(function (r) {
+      if (!r.ok) throw new Error('メニューの取得に失敗しました');
+      return r.json();
+    });
+    return Promise.race([request, timeout]).then(function (j) { clearTimeout(timer); return j; },
+      function (e) { clearTimeout(timer); throw e; });
+  }
+  var menuShards = {}, menuShardUse = {}, menuTick = 0, menuSelections = {}, menuSelectionOrder = [];
+  function menuShard(id) {
+    menuShardUse[id] = ++menuTick;
+    if (menuShards[id]) return menuShards[id];
+    var file = MENU.sources[id].file;
+    if (!/^data\/menus\/[a-f0-9]+\.json$/.test(file)) return Promise.reject(new Error('メニューの場所が不正です'));
+    menuShards[id] = menuJson(file).then(function (rows) {
+      // 画面で選ぶ数品だけを残し、大きい店別表は最大8個まで。
+      var keys = Object.keys(menuShards).sort(function (a, b) { return menuShardUse[a] - menuShardUse[b]; });
+      while (keys.length > 8) { var key = keys.shift(); delete menuShards[key]; delete menuShardUse[key]; }
+      return rows;
+    }).catch(function (e) { delete menuShards[id]; throw e; });
+    return menuShards[id];
+  }
+
+  function menuSearch(text, limit, options) {
+    if (!queryTerms(text).length) return Promise.resolve([]);
+    options = options || {};
+    var current = options.isCurrent || function () { return true; };
     return loadMenu().then(function (db) {
       /* 空白で区切った語を「すべて含む」品を探す。「ガスト ハンバーグ」を
          続きの文字列として探すと、名前がハンバーグで始まる品しか出ない */
-      if (!queryTerms(text).length) return [];
       var match = nameMatcher(text);
-      var hit = [];
-      /* v52でカフェのサイズ・ミルク違いが入り、1つの語で数百品に当たるようになった。
-         途中で打ち切らず(上限400)、公式を先に、名前の短い品(=言葉に近い品)を先に出す。
-         打ち切っていたころは「スタバ ラテ トール」で季節の品のミルク違いだけが並び、
-         定番の「スターバックス ラテ」が出なかった */
-      for (var i = 0; i < db.list.length && hit.length < 400; i++) {
-        if (match(db.list[i].key, true)) hit.push(db.list[i]);
-      }
-      hit.sort(function (a, b) {
+      var hit = [], at = 0;
+      function compare(a, b) {
         return ((b.official ? 1 : 0) - (a.official ? 1 : 0)) || (a.name.length - b.name.length) || (a.i - b.i);
+      }
+      function scan() {
+        if (!current()) return Promise.resolve([]);
+        var end = Math.min(at + 300, db.list.length);
+        for (; at < end; at++) if (match(db.list[at].key, true)) hit.push(db.list[at]);
+        hit.sort(compare); hit = hit.slice(0, limit || 12);
+        return at < db.list.length ? pause().then(scan) : Promise.resolve(hit);
+      }
+      return scan().then(function (found) {
+        var ids = [];
+        found.forEach(function (x) { if (ids.indexOf(x.source) < 0) ids.push(x.source); });
+        var rows = {}, pos = 0;
+        function batch() {
+          if (!current()) return Promise.resolve([]);
+          var next = ids.slice(pos, pos + 2); pos += next.length;
+          if (!next.length) return Promise.resolve();
+          return Promise.all(next.map(function (id) {
+            return menuShard(id).then(function (r) { rows[id] = r; });
+          })).then(batch);
+        }
+        return batch().then(function () {
+          if (!current()) return [];
+          return found.map(function (x) {
+            var row = rows[x.source][x.row];
+            var selected = Object.assign({}, x, { unit: row[1], nut: row[2], note: row[3], src: row[4], fetchedAt: row[5] });
+            menuSelections[x.i] = selected;
+            menuSelectionOrder = menuSelectionOrder.filter(function (i) { return i !== x.i; });
+            menuSelectionOrder.push(x.i);
+            while (menuSelectionOrder.length > 64) delete menuSelections[menuSelectionOrder.shift()];
+            return selected;
+          });
+        });
       });
-      return hit.slice(0, limit || 12);
     });
   }
 
   function menuAt(i) {
-    return MENU && MENU.list[i] ? MENU.list[i] : null;
+    return menuSelections[i] || null;
   }
 
   /* バーコードで引く。読み込みがまだなら、ここで読む */
@@ -647,7 +688,7 @@
     var p = productFor(name);
     amount = Number(amount);
     if (!isFinite(amount) || amount <= 0) amount = 1;
-    if (!p || !p.nut || p.u !== (unit || 'g')) {
+    if (!p || p.disabled || !p.nut || p.u !== (unit || 'g')) {
       return { nutrients: out, changed: false, rejected: false, ratio: null, product: p || null };
     }
 
@@ -680,19 +721,38 @@
     }
 
     estimatedKeys = estimatedKeys || [];
-    var changed = false, appliedKeys = [];
+    // 同名でも既知PFCと合わない商品は、微量栄養素まで流用しない。
+    if (['protein','fat','carb'].some(function (key) {
+      return typeof out[key] === 'number' && estimatedKeys.indexOf(key) < 0 &&
+        typeof p.nut[key] === 'number' &&
+        Math.abs(out[key] - p.nut[key] * factor) > Math.max(1, out[key] * 0.4);
+    })) return { nutrients: out, changed: false, rejected: true, product: p };
+    var changed = false, appliedKeys = [], inferred = [];
     for (var key in p.nut) {
       if (typeof p.nut[key] !== 'number') continue;
       // 既存の実測値は守る。以前の版で推定した値だけは、より確かな商品マスタで置き換える。
-      if (typeof out[key] === 'number' && estimatedKeys.indexOf(key) === -1) continue;
+      if (typeof out[key] === 'number' && (key === 'kcal' || estimatedKeys.indexOf(key) === -1)) continue;
       out[key] = round(p.nut[key] * factor, 3);
       changed = true;
-      appliedKeys.push(key);
+      if (p.estimated) inferred.push(key); else appliedKeys.push(key);
     }
     return {
       nutrients: out, changed: changed, rejected: false, ratio: ratio,
-      appliedKeys: appliedKeys, product: p
+      appliedKeys: appliedKeys, product: p,
+      est: inferred.length ? { keys: inferred, conf: 'mid', ref: p.src, cat: p.n,
+        method: 'product-reference', v: 3 } : null
     };
+  }
+
+  function mergeProductEstimate(old, result) {
+    var keys = ((old && old.keys) || []).filter(function (key) {
+      return (result.appliedKeys || []).indexOf(key) < 0;
+    });
+    ((result.est && result.est.keys) || []).forEach(function (key) {
+      if (keys.indexOf(key) < 0) keys.push(key);
+    });
+    if (!keys.length) return null;
+    return Object.assign({}, result.est || old || {}, { keys: keys });
   }
 
   /* ================= 食品名カテゴリ辞書 ================= */
@@ -702,17 +762,14 @@
     if (CATEGORIES) return Promise.resolve(CATEGORIES);
     if (categoryLoading) return categoryLoading;
     categoryLoading = fetch('data/food-categories.json')
-      .then(function (r) { return r.ok ? r.json() : { schema: 1, rules: [], excludes: [] }; })
+      .then(function (r) { if (!r.ok) throw new Error('栄養素の対応表を読み込めませんでした'); return r.json(); })
       .then(function (j) {
         CATEGORIES = j || { schema: 1, rules: [], excludes: [] };
         CATEGORIES.rules = CATEGORIES.rules || [];
         CATEGORIES.excludes = CATEGORIES.excludes || [];
         return CATEGORIES;
       })
-      .catch(function () {
-        CATEGORIES = { schema: 1, rules: [], excludes: [] };
-        return CATEGORIES;
-      });
+      .catch(function (e) { categoryLoading = null; throw e; });
     return categoryLoading;
   }
 
@@ -787,6 +844,7 @@
     loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
     queryVariants: queryVariants, queryTerms: queryTerms, nameMatcher: nameMatcher,
     loadProducts: loadProducts, productFor: productFor, mergeProduct: mergeProduct,
+    mergeProductEstimate: mergeProductEstimate,
     loadOff: loadOff, offByBarcode: offByBarcode, offSearch: offSearch, offReady: offReady,
     loadMenu: loadMenu, menuSearch: menuSearch, menuAt: menuAt,
     loadCategories: loadCategories,

@@ -368,13 +368,7 @@
         (e.est && e.est.keys) || []);
       if (result.changed) {
         e.nutrients = result.nutrients;
-        if (e.est && e.est.keys) {
-          var remaining = e.est.keys.filter(function (key) {
-            return (result.appliedKeys || []).indexOf(key) === -1;
-          });
-          if (remaining.length) e.est = Object.assign({}, e.est, { keys: remaining });
-          else delete e.est;
-        }
+        e.est = global.Foods.mergeProductEstimate(e.est, result);
       }
       return result.changed;
     }

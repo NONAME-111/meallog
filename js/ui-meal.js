@@ -542,16 +542,19 @@
     }
 
     /* ---- 横断検索(検索欄に文字があるとき) ---- */
+    var searchVersion = 0;
     function searchAll(text) {
+      var version = ++searchVersion;
+      function current() { return version === searchVersion && q.value.trim() === text && results.isConnected; }
       var nameHit = F.nameMatcher(text);
       return Promise.all([
-        F.searchCommon(text, { limit: 24 }),
+        F.searchCommon(text, { limit: 24 }).catch(function () { return []; }),
         usedList(),
         histAll(),
         comboList(),
-        F.search(text, { limit: 24 }),
-        F.menuSearch(text, 12)
+        F.search(text, { limit: 24 }).catch(function () { return []; })
       ]).then(function (r) {
+        if (!current()) return;
         var commons = r[0];
         var used = r[1].filter(function (x) { return nameHit(x.name); }).slice(0, 12);
         var usedNames = {};
@@ -577,11 +580,6 @@
           html2 += group('食材', '1食分の目安つき',
             commons.map(function (x) { return resRow(x, 'common'); }).join(''));
         }
-        // 外食チェーンの公表値。1食ぶんの値なので、量を選ばずそのまま記録できる
-        if (r[5] && r[5].length) {
-          html2 += group('お店のメニュー', '各社の公表値',
-            r[5].map(function (x) { return resRow(x, 'menu'); }).join(''));
-        }
         if (hist.length) {
           html2 += group('履歴' + (histSlot ? '（' + slotName(histSlot) + '）' : ''), '',
             hist.map(historyRow).join(''));
@@ -590,7 +588,18 @@
           html2 += group('成分表のほかの候補', '素材そのものの100gあたり',
             seibun.map(function (x) { return resRow(x, 'seibun'); }).join(''));
         }
+        // 後から結果が増えても、先に表示した履歴の位置を押し下げない。
+        html2 += '<div class="menu-later"><div class="tiny muted" role="status">お店のメニューを検索中…</div></div>';
         results.innerHTML = (html2 || '<div class="empty">該当する食品がありません</div>') + webRow(text);
+        var later = results.querySelector('.menu-later');
+        // 手元の履歴・食材は先に使える。店の表の通信を待たない。
+        return F.menuSearch(text, 12, { isCurrent: current }).then(function (menus) {
+          if (!current() || !later.isConnected) return;
+          later.innerHTML = menus.length ? group('お店のメニュー', '公表値・出典を確認できます',
+            menus.map(function (x) { return resRow(x, 'menu'); }).join('')) : '';
+        }).catch(function () {
+          if (current() && later.isConnected) later.innerHTML = '<div class="tiny muted" role="status">お店のメニューを読み込めませんでした。通信後に検索し直してください。</div>';
+        });
       });
     }
 
@@ -602,6 +611,7 @@
 
     var timer = 0;
     q.addEventListener('input', function () {
+      searchVersion++;
       clearTimeout(timer);
       timer = setTimeout(doSearch, 180);
     });
@@ -1054,15 +1064,18 @@
       ref: { type: 'seibun', id: f.id }, note: F.groupName(f.g)
     };
   }
-  /* 外食チェーンのメニュー1品。値は1食ぶん。
+  /* 外食チェーンのメニュー1品。値は資料記載の1食/100gぶん。
      記録名に店名を入れておくと、あとで一覧を見たときにどこの何か分かる */
   function fromMenu(m) {
+    var per100g = m.unit === '100g';
     return {
-      name: m.shop + ' ' + m.name, basis: 'serving', per: m.nut,
-      unit: m.unit || '食', defaultAmount: 1,
-      ref: { type: 'menu', id: m.shop + '|' + m.name },
+      name: m.shop + ' ' + m.name, basis: per100g ? '100g' : 'serving', per: m.nut,
+      unit: per100g ? 'g' : (m.unit || '食'), defaultAmount: per100g ? 100 : 1,
+      ref: { type: 'menu', id: m.shop + '|' + m.name,
+        src: m.src || '', fetchedAt: m.fetchedAt || '',
+        basis: m.unit || '食', note: m.note || '', official: !!m.official },
       note: m.shop + (m.note ? ' ・ ' + m.note : '') +
-        (m.official ? ' ・ 店の公表値'
+        (m.official ? ' ・ 店の公表値' + (m.fetchedAt ? '（確認 ' + m.fetchedAt + '）' : '') + (m.src ? ' / ' + m.src : '')
           : ' ・ 非公式(' + (m.src || 'FatSecret・利用者投稿') + '。店頭表示と違うことがあります)'),
       brand: m.shop
     };
@@ -1075,7 +1088,7 @@
     var baseAmount = m.basis === 'serving' ? 1 : 100;
     var merged = F.mergeProduct(m.name, m.nutrients || {}, unit, baseAmount,
       (m.est && m.est.keys) || []);
-    var mergedEst = cleanEstimate(m.est, merged.appliedKeys);
+    var mergedEst = F.mergeProductEstimate(m.est, merged);
     return {
       name: m.name, basis: m.basis || '100g', per: merged.nutrients,
       unit: unit,
@@ -1104,19 +1117,8 @@
       name: e.name, basis: (e.unit === 'g') ? '100g' : 'serving', per: per,
       unit: e.unit || 'g', defaultAmount: amount, ref: e.ref || { type: 'manual' },
       note: e.brand || '', brand: e.brand || '',
-      est: cleanEstimate(e.est, masterMerge.appliedKeys), seq: e.seq
+      est: F.mergeProductEstimate(e.est, masterMerge), seq: e.seq
     };
-  }
-
-  function cleanEstimate(est, measuredKeys) {
-    if (!est || !est.keys || !est.keys.length) return null;
-    measuredKeys = measuredKeys || [];
-    var keys = est.keys.filter(function (key) { return measuredKeys.indexOf(key) === -1; });
-    if (!keys.length) return null;
-    var out = {};
-    for (var k in est) out[k] = est[k];
-    out.keys = keys;
-    return out;
   }
 
   function estimateNutrients(name, nutrients, pick, amount) {
@@ -1215,9 +1217,9 @@
           '」を押すと' + slotName(slot) + 'に入ります。</div>'
         : '') +
       (lacksPfc
-        ? '<div class="card"><b>栄養素が登録されていません</b>' +
-          '<div class="small muted" style="margin-top:6px">この食品はカロリーだけの登録なので、' +
-          '成分表からも推定できませんでした。分かる値だけ入力できます。</div></div>'
+        ? '<div class="card"><b>一部の栄養素は不明です</b>' +
+          '<div class="small muted" style="margin-top:6px">公表値・入力済みの値だけで記録できます。' +
+          '不足する項目は、商品表示などで分かる場合に入力してください。</div></div>'
         : (hasEstimate ? '<div class="estimate-hint">成分表からの推定値です</div>' : '')) +
       '<button class="btn sub wide nutrient-edit" id="fillNut">' +
         ((pick.ref && pick.ref.type === 'my') ? '栄養素を編集する' : '栄養素を入力する') +
@@ -1245,19 +1247,20 @@
       for (var k in pick.per) {
         if (typeof pick.per[k] === 'number') out[k] = F.round(pick.per[k] * r, 3);
       }
-      out.sugar = F.sugarOf(out);
+      if (typeof out.sugar !== 'number') out.sugar = F.sugarOf(out);
       return { amount: a, n: out };
     }
 
     function draw() {
       var c = calc();
       var n = c.n;
+      function grams(key) { return typeof n[key] === 'number' ? N.fmt(n[key]) + 'g' : '不明'; }
       prev.innerHTML = '<div class="row between"><b style="font-size:22px">' +
         Math.round(n.kcal || 0) + ' kcal</b><span class="small muted">' +
         drum.text() + ' ' + (isG ? 'g' : A().esc(pick.unit)) + '</span></div>' +
-        '<div class="small muted" style="margin-top:6px">たんぱく質 ' + N.fmt(n.protein || 0) +
-        'g ・ 脂質 ' + N.fmt(n.fat || 0) + 'g ・ 炭水化物 ' + N.fmt(n.carb || 0) +
-        'g ・ 食塩 ' + N.fmt(n.salt || 0) + 'g' +
+        '<div class="small muted" style="margin-top:6px">たんぱく質 ' + grams('protein') +
+        ' ・ 脂質 ' + grams('fat') + ' ・ 炭水化物 ' + grams('carb') +
+        ' ・ 食塩 ' + grams('salt') +
         (pick.est && pick.est.keys && pick.est.keys.length ? '（推定を含む）' : '') + '</div>';
     }
 

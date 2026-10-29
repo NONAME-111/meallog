@@ -723,7 +723,7 @@
     exerciseGoal322Migrated: 0, // 旧既定値200kcalを322kcalへ移した版
     chickenLiver11232Migrated: 0, // 旧レバー推定(11197)を鶏肝(11232)へ移した版
     fruitEstimateMigrated: 0,     // 記録済みの果物に成分表の値を補った回(1=v42 空のものだけ / 2=v43 古い推定も)
-    estimateCleanupMigrated: 0,   // v33より前の推定値を今の決まりで計算し直した版(v44)
+    estimateCleanupMigrated: 0,   // 推定値を再検査した版。v54は対応食品・重量の整合性も検査
     productFillMigrated: 0,       // 商品マスタに足した食品を記録済みの分にも当てた版(45=v45)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
@@ -970,7 +970,7 @@
   */
   function migrateEstimateCleanup() {
     return Settings.get().then(function (st) {
-      if (st.estimateCleanupMigrated) {
+      if ((st.estimateCleanupMigrated || 0) >= 54) {
         return { entries: 0, myfoods: 0, combos: 0, changed: 0, cleared: 0, skipped: true };
       }
       var estimator = global.Estimate;
@@ -999,7 +999,7 @@
           if (!slice.length) return Promise.resolve();
           return Promise.all(slice.map(function (job) {
             return estimator.reestimate(job.rec, job.opts).then(function (next) {
-              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec.nutrients) });
+              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec) });
             });
           })).then(function () {
             at += slice.length;
@@ -1017,7 +1017,7 @@
             var next = {};
             for (var key in combo) next[key] = combo[key];
             next.items = items.map(function (item, i) { return nextItems[i] || item; });
-            return { next: next, before: JSON.stringify(items.map(function (x) { return x.nutrients; })) };
+            return { next: next, before: JSON.stringify(combo) };
           });
         });
         return step().then(function () {
@@ -1027,7 +1027,7 @@
         });
       }).then(function (groups) {
         var ce = groups[0].filter(Boolean), cf = groups[1].filter(Boolean), cc = groups[2].filter(Boolean);
-        return writeGuarded(ce, cf, cc, { estimateCleanupMigrated: 1 }).then(function (written) {
+        return writeGuarded(ce, cf, cc, { estimateCleanupMigrated: 54 }).then(function (written) {
           return {
             entries: written.entries, myfoods: written.myfoods, combos: written.combos,
             changed: written.entries + written.myfoods + written.combos, cleared: written.cleared
@@ -1038,7 +1038,7 @@
   }
 
   /* 裏で動かす移行の書き込み(migrateEstimateCleanup / migrateProductFill で共通)。
-     ce/cf/cc は {next: 書きたい記録, before: 読んだときの栄養素の写し} の配列(食事記録/マイ食品/セット)。
+     ce/cf/cc は {next: 書きたい記録, before: 読んだときの記録全体の写し} の配列(食事記録/マイ食品/セット)。
      そのあいだに利用者が記録を直しても上書きしないよう、書き込む直前に読み直し、
      読んだときから栄養素が変わっていない記録だけを書く。最後に設定を読み直して印だけを足す。 */
   function writeGuarded(ce, cf, cc, settingsPatch) {
@@ -1058,10 +1058,9 @@
        1万5千件を1回の取引で書くと、手元のPCでも1.4秒画面が止まった。
        途中でアプリを閉じても、書いた分はそのまま残り、次の起動で残りだけを続ける
        (書き終えた記録はもう対象にならない) */
-    var byNutrients = function (x) { return JSON.stringify(x.nutrients); };
-    var byItems = function (x) {
-      return JSON.stringify((x.items || []).map(function (i) { return i.nutrients; }));
-    };
+    // 栄養素だけでなく日時・食事区分・食品名・量の編集も保護する(v54)。
+    var byNutrients = function (x) { return JSON.stringify(x); };
+    var byItems = byNutrients;
     var batches = [], b;
     for (b = 0; b < ce.length; b += 500) batches.push({ store: 'entries', jobs: ce.slice(b, b + 500), fp: byNutrients });
     for (b = 0; b < cf.length; b += 500) batches.push({ store: 'myfoods', jobs: cf.slice(b, b + 500), fp: byNutrients });
@@ -1129,14 +1128,7 @@
           var next = {};
           for (var k in rec) next[k] = rec[k];
           next.nutrients = merged.nutrients;
-          delete next.est;
-          if (oldEst) {
-            // 商品マスタで埋まった項目は推定ではなくなる
-            var remaining = oldEst.keys.filter(function (key) {
-              return (merged.appliedKeys || []).indexOf(key) === -1;
-            });
-            if (remaining.length) next.est = Object.assign({}, oldEst, { keys: remaining });
-          }
+          next.est = F.mergeProductEstimate(oldEst, merged);
           return estimator.fill(next.name, next.nutrients, {
             unit: unit, amount: amount, est: next.est || null
           }).then(function (filled) {
@@ -1161,7 +1153,7 @@
           if (!slice.length) return Promise.resolve();
           return Promise.all(slice.map(function (job) {
             return applyMaster(job.rec, job.unit, job.amount).then(function (next) {
-              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec.nutrients) });
+              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec) });
             });
           })).then(function () {
             at += slice.length;
@@ -1179,7 +1171,7 @@
             var next = {};
             for (var key in combo) next[key] = combo[key];
             next.items = items.map(function (item, i) { return nextItems[i] || item; });
-            return { next: next, before: JSON.stringify(items.map(function (x) { return x.nutrients; })) };
+            return { next: next, before: JSON.stringify(combo) };
           });
         });
         return step().then(function () {

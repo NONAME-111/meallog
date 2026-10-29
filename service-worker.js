@@ -1,33 +1,33 @@
 /* service-worker.js - オフライン動作用のキャッシュ
    リリースごとに CACHE_NAME を上げること (画面の全体バージョンと対応させる) */
-var CACHE_NAME = 'meallog-v53-cl45';   /* v53 / Claude ver45 */
+var CACHE_NAME = 'meallog-v54-c10';   /* v54 / Codex v10 */
 var ASSETS = [
   './',
   'index.html',
-  'css/style.css?v=20261028-53',
-  'js/store.js?v=20261028-53',
-  'js/foods.js?v=20261028-53',
-  'js/estimate.js?v=20261028-53',
-  'js/nutrition.js?v=20261028-53',
-  'js/nutrition-label.js?v=20261028-53',
-  'js/barcode.js?v=20261028-53',
-  'js/ocr.js?v=20261028-53',
-  'js/drum.js?v=20261028-53',
-  'js/ui-meal.js?v=20261028-53',
-  'js/steps.js?v=20261028-53',
-  'js/ui-body.js?v=20261028-53',
-  'js/ui-graph.js?v=20261028-53',
-  'js/ui-advice.js?v=20261028-53',
-  'js/ui-settings.js?v=20261028-53',
-  'js/app.js?v=20261028-53',
+  'css/style.css?v=20261030-54',
+  'js/store.js?v=20261030-54',
+  'js/foods.js?v=20261030-54',
+  'js/estimate.js?v=20261030-54',
+  'js/nutrition.js?v=20261030-54',
+  'js/nutrition-label.js?v=20261030-54',
+  'js/barcode.js?v=20261030-54',
+  'js/ocr.js?v=20261030-54',
+  'js/drum.js?v=20261030-54',
+  'js/ui-meal.js?v=20261030-54',
+  'js/steps.js?v=20261030-54',
+  'js/ui-body.js?v=20261030-54',
+  'js/ui-graph.js?v=20261030-54',
+  'js/ui-advice.js?v=20261030-54',
+  'js/ui-settings.js?v=20261030-54',
+  'js/app.js?v=20261030-54',
   'vendor/zxing.min.js',
   'data/foods.json',
   'data/common.json',
   'data/kanji-yomi.json',
   'data/product-nutrients.json',
   'data/food-categories.json',
-  /* data/menu-items.json(外食チェーンの公式値)は v52 で約0.7MBになったので先読みしない。
-     検索したときに初めて取りに行き、そのとき控えに入る(非公式の menu-items-unofficial.json と同じ) */
+  /* v54: 外食は menu-index.json（索引）と data/menus/（店別詳細）へ分割。
+     どちらも先読みしない。検索したときに必要なものだけ取得・キャッシュする。 */
   /* data/off-japan.json は 0.7MB あるので先読みしない。
      バーコードを読んだときに初めて取りに行き、そのとき控えに入る */
   'manifest.webmanifest',

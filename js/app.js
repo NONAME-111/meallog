@@ -297,7 +297,6 @@
       render();
     });
 
-    var liverMigration = null, fruitMigration = null;
     // 日付の上に版を小さく出す(更新が届いたかを、設定の一番下まで見に行かずに確かめられる)
     var hdrVer = document.getElementById('hdrVer');
     if (hdrVer) hdrVer.textContent = version();
@@ -305,34 +304,26 @@
        v52までは移行や設定の読み出しが失敗すると(iPhoneでデータベースへの接続が切れたときなど)、
        記録画面が描かれないまま止まっていた */
     var soft = function (p) { return p.catch(function (e) { void e; return null; }); };
-    soft(S.migrateToilet()).then(function () {
-      return soft(S.migrateExerciseGoal());
-    }).then(function () {
-      // 初回オフライン等で成分表を読めない場合も起動は続け、次回また試す。
-      return soft(S.migrateChickenLiver());
-    }).then(function (result) {
-      liverMigration = result;
-      // 記録済みの果物にビタミンなどを補う(一度だけ)。成分表を読めない場合は次回また試す
-      return soft(S.migrateFruitEstimate());
-    }).then(function (result) {
-      fruitMigration = result;
-      // 設定が読めないときは記録画面で起動し、一度だけの重い後片付け(食べなかった埋め)は次回に回す
-      return reloadSettings().catch(function () { return { lastTab: 'meal', skipBackfilled: 1 }; });
-    }).then(function (st) {
+    // v54: 古い記録の移行や食品表の取得も、最初の表示を待たせない。
+    reloadSettings().catch(function () { return { lastTab: 'meal', skipBackfilled: 1 }; }).then(function (st) {
       state.tab = st.lastTab || 'meal';
       Array.prototype.forEach.call(document.querySelectorAll('#tabbar .tab'), function (b) {
         b.classList.toggle('is-active', b.dataset.tab === state.tab);
       });
       render();
-      if (liverMigration && liverMigration.changed) {
-        toast('保存済みの鶏レバー ' + liverMigration.changed + '件を再較正しました', 4200);
-      }
-      if (fruitMigration && fruitMigration.changed) {
-        toast('果物の記録 ' + fruitMigration.changed + '件にビタミンなどを補いました', 4200);
-      }
       // 前の版の推定値(全食品の中央値など)を今の決まりで計算し直す(一度だけ)。
       // 件数が多いので画面を出してから裏で動かす。読めなかった場合は次回また試す
-      S.migrateEstimateCleanup().then(function (r) {
+      new Promise(function (resolve) { setTimeout(resolve, 100); }).then(function () {
+        return soft(S.migrateToilet());
+      }).then(function () {
+        return soft(S.migrateExerciseGoal());
+      }).then(function () {
+        return soft(S.migrateChickenLiver());
+      }).then(function () {
+        return soft(S.migrateFruitEstimate());
+      }).then(function () {
+        return S.migrateEstimateCleanup();
+      }).then(function (r) {
         if (r && r.changed) {
           toast('前の版の推定値を整理しました（' + r.changed + '件。値が不明に戻したもの ' +
             r.cleared + '件）', 6000);
@@ -342,9 +333,8 @@
         // 商品マスタに足した食品を、記録済みの分にも当てる(版ごとに一度)。整理が終わってから動かす
         return S.migrateProductFill();
       }).then(function (p) {
-        if (!p || !p.changed) return;
-        toast('記録済みの ' + p.changed + '件に、商品の栄養成分を補いました', 5000);
-        if (!sheetOpen()) render();
+        if (p && p.changed) toast('記録済みの ' + p.changed + '件に、商品の栄養成分を補いました', 5000);
+        return reloadSettings().then(function () { if (!sheetOpen()) render(); });
       }).catch(function (e) { void e; });
       global.Steps.receiveUrl().then(function (count) {
         if (count) { toast(count + '日分の歩数を取り込みました', 3500); render(); }
@@ -361,7 +351,7 @@
         }).then(function () {
           // かな検索用の読み表と、商品ごとの栄養マスタ(どちらも無くても動く)
           global.Foods.loadYomi();
-          global.Foods.loadProducts();
+          global.Foods.loadProducts().catch(function (e) { void e; });
         });
       }, 300);
       // 取り込んだ過去日の未記録を「食べなかった」で一度だけ埋める
