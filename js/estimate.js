@@ -64,13 +64,17 @@
     return model.excludes.some(function (x) { return n.indexOf(x) !== -1; });
   }
 
-  function matchingRule(name, model) {
+  /* hint=true のときは、生の食品だけに使う規則(rawOnly)を調理済みの名前でも返す。
+     量は決めず、似た食品の手がかり(どの食品か)にだけ使う(v58)。
+     「まろやかな味わい若どりレバー焼」は「焼」で鶏レバーの規則が外れ、名前の手がかりも失って、
+     炭水化物まで分かっている記録(たれの糖分あり)で 牛レバー(ビタミンAが鶏の約15分の1)を選んでいた */
+  function matchingRule(name, model, hint) {
     var n = F.norm(name);
     for (var i = 0; i < model.rules.length; i++) {
       var rule = model.rules[i];
       if (rule._not.some(function (x) { return n.indexOf(x) !== -1; })) continue;
       if (rule._kw.some(function (x) { return n.indexOf(x) !== -1; })) {
-        if (rule.rawOnly) {
+        if (rule.rawOnly && !hint) {
           var remainder = n;
           rule._kw.forEach(function (kw) { remainder = remainder.replace(kw, ''); });
           if (/焼|やき|茹|ゆで|蒸|煮|炒|いため|揚|あげ|乾燥|干し|缶詰/.test(remainder)) return null;
@@ -1088,7 +1092,8 @@
           }
         }
 
-        return similar(name, out, known, added, rule, model, opts);
+        // 調理済みで外した規則も、どの食品かの手がかりには使う(量は決めない。v58)
+        return similar(name, out, known, added, rule || matchingRule(name, model, true), model, opts);
       })();
       if (anchored.length) {
         if (!result) {
@@ -1247,6 +1252,6 @@
     _variant: function (v, lambda, cap) {
       VARIANT = v || ''; if (lambda != null) LAMBDA = lambda; if (cap != null) CAP = cap;
     },
-    MODEL_VERSION: 4
+    MODEL_VERSION: 5
   };
 })(window);

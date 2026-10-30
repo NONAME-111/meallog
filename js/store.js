@@ -727,7 +727,7 @@
     productFillMigrated: 0,       // 商品マスタに足した食品を記録済みの分にも当てた版(45=v45)
     similarFillMigrated: 0,       // 欠けた栄養素を似た食品からの推定で補った版(55=v55)
     anchorMigrated: 0,            // 推定値の変化が小さい食品名の栄養素を固定した版(56=v56)
-    weakFixMigrated: 0,           // 名前で決めきれなかった推定を計算し直した版(57=v57)
+    weakFixMigrated: 0,           // 名前で決めきれなかった推定を計算し直した版(57=v57・58=v58)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -1270,8 +1270,10 @@
      v55/v56 は、カロリーとPFCの合計が合わない食品(たれ付きのレバー焼き)を「名前は合うが中身が別物」と判定し、
      食品群全体から あさり などを当てていた(2026-10-31 利用者報告: まろやかな味わい若どりレバー焼 のビタミンAがほぼ0)。
      固定した栄養素(アンカー)は fill が固定値を使うので動かない。実測・手入力も変えない(reestimate)
+     v58: 同じ記録が v57 では 牛レバー になっていた(調理済みの名前で鶏レバーの手がかりを捨てていた)ので、もう一度だけ。
+     変わらない記録は reestimate が null を返すので書かない
   */
-  var WEAK_FIX_VERSION = 57;
+  var WEAK_FIX_VERSION = 58;
   function weakEstimate(rec) {
     var est = rec && rec.est;
     return !!(est && est.keys && est.keys.length && /similar-(?:weak|group)/.test(est.method || ''));
