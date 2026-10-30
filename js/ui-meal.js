@@ -1174,9 +1174,12 @@
   /* ---------------- 数量入力シート ---------------- */
   function openAmount(state, slot, pick, existingId, onPick) {
     if (!pick._amountPrepared) {
+      /* 数量画面と栄養素の編集画面は高さを固定する(tall)。「確認しています」の短い画面から
+         中身の入った画面へ伸びると、iPhoneではシートがスクロールしなくなる(v50 と同じ。
+         2026-10-31 利用者報告: 栄養素の編集から戻ると数量画面がスクロールしない) */
       A().openSheet(onPick ? 'セットに入れる分量' :
         (existingId ? '記録を編集' : slotName(slot) + 'に追加'),
-      '<div class="empty">栄養素を確認しています…</div>');
+      '<div class="empty">栄養素を確認しています…</div>', { tall: true });
       return prepareAmountPick(pick).then(function (prepared) {
         openAmount(state, slot, prepared, existingId, onPick);
       }).catch(function () {
@@ -1230,7 +1233,7 @@
       (existingId ? '<button class="btn sub wide" id="del" style="margin-top:8px">削除する</button>' : '');
 
     var body = A().openSheet(
-      onPick ? 'セットに入れる分量' : (existingId ? '記録を編集' : slotName(slot) + 'に追加'), html);
+      onPick ? 'セットに入れる分量' : (existingId ? '記録を編集' : slotName(slot) + 'に追加'), html, { tall: true });
     var prev = body.querySelector('#preview');
     var amount = startAmount;
     var drum = global.Drum.create(body.querySelector('#amtDrum'), {
@@ -1442,7 +1445,7 @@
       (preset.myFoodId ? '<button class="btn sub wide" id="mUnlink" style="margin-top:8px;color:var(--danger-text)">' +
         'この食品との紐付けを解除</button>' : '');
 
-    var body = A().openSheet(preset.myFoodId ? '栄養素を編集' : '食品を手入力', html);
+    var body = A().openSheet(preset.myFoodId ? '栄養素を編集' : '食品を手入力', html, { tall: true });
     var basis = body.querySelector('#mBasis');
     if (preset.basis) basis.value = preset.basis;
     var refFood = preset.refFood && typeof preset.refFood === 'object' ? preset.refFood : null;

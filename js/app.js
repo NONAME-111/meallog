@@ -344,6 +344,11 @@
         return S.migrateAnchors();
       }).then(function (a) {
         if (a && a.names) toast('推定値の変化が小さかった ' + a.names + '品の栄養素を固定しました', 5000);
+      }).catch(function (e) { void e; }).then(function () {
+        // 名前で決めきれなかった推定を、直した推定で計算し直す(一度だけ。v57)
+        return S.migrateWeakFix();
+      }).then(function (w) {
+        if (w && w.changed) toast('記録済みの ' + w.changed + '件の推定値を直しました', 5000);
         return reloadSettings().then(function () { if (!sheetOpen()) render(); });
       }).catch(function (e) { void e; });
       global.Steps.receiveUrl().then(function (count) {

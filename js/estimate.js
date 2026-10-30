@@ -668,6 +668,15 @@
     return Math.sqrt(d);
   }
 
+  /* 三大栄養素の合計に占める割合どうしの差。表示のカロリーとPFCの合計が合わない食品
+     (まろやかな味わい若どりレバー焼: 159kcal に対し PFC は 117kcal 分)でも、
+     中身の割合が同じなら同じ食品とみなせるよう、名前で決めてよいかの判定に使う(v57) */
+  function distN(a, b) {
+    var sa = a[0] + a[1] + a[2], sb = b[0] + b[1] + b[2];
+    if (!(sa > 0) || !(sb > 0)) return dist(a, b);
+    return dist([a[0] / sa, a[1] / sa, a[2] / sa], [b[0] / sb, b[1] / sb, b[2] / sb]);
+  }
+
   /* カロリーの割合 x(合計1)で候補を混ぜたとき、PFCのエネルギー比が target に近く、
      しかも名前の合い方で決めた割合 x0 から離れすぎないものを探す(射影勾配法) */
   function mixture(cands, target) {
@@ -773,10 +782,11 @@
       if (drinkOnly && !it.drink) return;
       if (family) {
         if (!it.toks.some(function (x) { return x.t === family; })) return;
-      } else {
-        if (groups ? groups.indexOf(it.g) === -1 : NO_HINT_SKIP.indexOf(it.g) !== -1) return;
-        if (it.state === 'dry' || CONCENTRATED.test(it.n)) return;
+      } else if (groups ? groups.indexOf(it.g) === -1 : NO_HINT_SKIP.indexOf(it.g) !== -1) {
+        return;
       }
+      // 名前で当たった候補は別に加えるので、ここでは仲間でも除く(蒟蒻畑 → 凍みこんにゃく 乾)
+      if (it.state === 'dry' || CONCENTRATED.test(it.n)) return;
       rows.push({ it: it, d: dist(it.sh, target) });
     });
     rows.sort(function (a, b) { return a.d - b.d; });
@@ -838,12 +848,12 @@
     if (x0) {
       var fitSh = [0, 0, 0];
       cands.forEach(function (c, i) { for (var q = 0; q < 3; q++) fitSh[q] += x0[i] * c.it.sh[q]; });
-      fit = dist(fitSh, target);
+      fit = distN(fitSh, target);
     }
     /* 名前が強く合い、しかもその食品(の組み合わせ)でPFCの割合を説明できるとき。
        名前が合ってもPFCがまるで違えば別物(モスシェイク コーヒー は コーヒー浸出液 ではない) */
     var strong = best >= STRONG_NAME && (!target || !!macroHow || fit <= 0.15 || cands.some(function (c) {
-      var d = dist(c.it.sh, target);
+      var d = distN(c.it.sh, target);
       return d <= 0.17 || ((c.it.g === 'dish' || c.it.g === '18' || c.it.id === pinnedId) && d <= 0.35);
     }));
     var per = {}, lead = null, method, residual = 1, gpk = null;
@@ -908,16 +918,20 @@
       /* 候補の多くに共通する食材の語(にわとり・まぐろ…)があれば、その仲間の中でPFCの割合が近いものを選ぶ
          (蒸し鶏 は鶏の中から。食品群全体から選ぶと さば缶 になった) */
       var family = null;
-      if (diverse.length >= 2 && !info.dish) {
+      if (!info.dish) {
+        // 同じ語でしか当たらない食品(鶏・豚・牛の肝臓)はまとめずに数える(v57。まとめると1つになり仲間が見つからなかった)
         var count = {};
-        diverse.slice(0, 6).forEach(function (p) {
+        pool.slice(0, 8).forEach(function (p) {
           p.it.toks.forEach(function (x) { if (!x.cat && !x.light && x.t.length >= 2 && p.sig.split('|').indexOf(x.t) !== -1) count[x.t] = (count[x.t] || 0) + 1; });
         });
         Object.keys(count).forEach(function (t) { if (count[t] >= 2 && (!family || count[t] > count[family])) family = t; });
       }
       if (target) {
         var near = family ? neighbours(model, null, target, seen, 8, info.drink, family) : [];
-        if (near.length < 3) near = neighbours(model, groups, target, seen, 10, info.drink);
+        var inFamily = family ? rows.filter(function (r) { return r.it.toks.some(function (x) { return x.t === family; }); }).length : 0;
+        /* 仲間が名前の候補と合わせて2つ以上あれば、食品群全体からは選ばない
+           (若どりレバー焼 が、肝臓が3つしかないため食品群全体に広がり、あさり になった) */
+        if (!family || near.length + inFamily < 2) near = neighbours(model, groups, target, seen, 10, info.drink);
         near.forEach(function (r) { rows.push({ it: r.it, prior: 0.05 + compOf(r.it) }); });
       }
       if (rows.length) {

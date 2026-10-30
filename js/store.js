@@ -727,6 +727,7 @@
     productFillMigrated: 0,       // 商品マスタに足した食品を記録済みの分にも当てた版(45=v45)
     similarFillMigrated: 0,       // 欠けた栄養素を似た食品からの推定で補った版(55=v55)
     anchorMigrated: 0,            // 推定値の変化が小さい食品名の栄養素を固定した版(56=v56)
+    weakFixMigrated: 0,           // 名前で決めきれなかった推定を計算し直した版(57=v57)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -1264,6 +1265,75 @@
     });
   }
 
+  /*
+     v57: 名前で決めきれなかった推定(est.method に similar-weak / similar-group)だけを、直した推定で計算し直す(一度だけ)。
+     v55/v56 は、カロリーとPFCの合計が合わない食品(たれ付きのレバー焼き)を「名前は合うが中身が別物」と判定し、
+     食品群全体から あさり などを当てていた(2026-10-31 利用者報告: まろやかな味わい若どりレバー焼 のビタミンAがほぼ0)。
+     固定した栄養素(アンカー)は fill が固定値を使うので動かない。実測・手入力も変えない(reestimate)
+  */
+  var WEAK_FIX_VERSION = 57;
+  function weakEstimate(rec) {
+    var est = rec && rec.est;
+    return !!(est && est.keys && est.keys.length && /similar-(?:weak|group)/.test(est.method || ''));
+  }
+  function migrateWeakFix() {
+    return Settings.get().then(function (st) {
+      if ((st.weakFixMigrated || 0) >= WEAK_FIX_VERSION) {
+        return { entries: 0, myfoods: 0, combos: 0, changed: 0, skipped: true };
+      }
+      var estimator = global.Estimate;
+      if (!estimator || !estimator.reestimate) return Promise.reject(new Error('推定の処理を読み込めませんでした'));
+      return Promise.all([estimator.load(), allEntries(), MyFoods.all(), Combos.all()]).then(function (r) {
+        var entries = (r[1] || []).filter(notSkip), myfoods = r[2] || [], combos = r[3] || [];
+        var jobs = [];
+        entries.filter(weakEstimate).forEach(function (rec) {
+          jobs.push({ kind: 'entries', rec: rec, opts: { unit: rec.unit || 'g', amount: rec.amount || 1 } });
+        });
+        myfoods.filter(weakEstimate).forEach(function (rec) {
+          jobs.push({ kind: 'myfoods', rec: rec, opts: {
+            unit: rec.basis === 'serving' ? (rec.servingLabel || '食') : 'g',
+            amount: rec.basis === 'serving' ? 1 : 100
+          } });
+        });
+        var done = { entries: [], myfoods: [] }, at = 0;
+        function step() {
+          var slice = jobs.slice(at, at + 200);
+          if (!slice.length) return Promise.resolve();
+          return Promise.all(slice.map(function (job) {
+            return estimator.reestimate(job.rec, job.opts).then(function (next) {
+              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec) });
+            });
+          })).then(function () {
+            at += slice.length;
+            return new Promise(function (resolve) { setTimeout(resolve, 0); }).then(step);
+          });
+        }
+        var comboJobs = combos.filter(function (combo) {
+          return (combo.items || []).some(weakEstimate);
+        }).map(function (combo) {
+          var items = combo.items || [];
+          return Promise.all(items.map(function (item) {
+            return weakEstimate(item) ? estimator.reestimate(item, { unit: item.unit || 'g', amount: item.amount || 1 }) : null;
+          })).then(function (nextItems) {
+            if (!nextItems.some(Boolean)) return null;
+            var next = {};
+            for (var key in combo) next[key] = combo[key];
+            next.items = items.map(function (item, i) { return nextItems[i] || item; });
+            return { next: next, before: JSON.stringify(combo) };
+          });
+        });
+        return step().then(function () {
+          return Promise.all([done.entries, done.myfoods, Promise.all(comboJobs)]);
+        });
+      }).then(function (groups) {
+        var cc = groups[2].filter(Boolean);
+        return writeGuarded(groups[0], groups[1], cc, { weakFixMigrated: WEAK_FIX_VERSION }).then(function (written) {
+          return { changed: written.entries + written.myfoods + written.combos };
+        });
+      });
+    });
+  }
+
   /* 裏で動かす移行の書き込み(migrateEstimateCleanup / migrateProductFill / migrateSimilarFill で共通)。
      ce/cf/cc は {next: 書きたい記録, before: 読んだときの記録全体の写し} の配列(食事記録/マイ食品/セット)。
      そのあいだに利用者が記録を直しても上書きしないよう、書き込む直前に読み直し、
@@ -1495,7 +1565,7 @@
     migrateEstimateCleanup: migrateEstimateCleanup,
     migrateProductFill: migrateProductFill,
     migrateSimilarFill: migrateSimilarFill,
-    migrateAnchors: migrateAnchors, Anchors: Anchors,
+    migrateAnchors: migrateAnchors, Anchors: Anchors, migrateWeakFix: migrateWeakFix,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

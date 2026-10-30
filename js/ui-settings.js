@@ -293,11 +293,17 @@
     }).catch(function () { box.textContent = ''; });
   }
 
-  function anchorRows(v) {
+  function anchorRows(v, query) {
     var items = (v && v.items) || {}, labels = (v && v.labels) || {};
     var keys = Object.keys(items).sort(function (a, b) {
       return String(labels[a] || a).localeCompare(String(labels[b] || b), 'ja');
     });
+    // 検索欄の語(空白区切りで順不同・かな読みも)で絞る。食品の検索と同じ Foods.nameMatcher
+    if (query && String(query).trim()) {
+      var match = global.Foods.nameMatcher(query);
+      keys = keys.filter(function (k) { return match(labels[k] || k); });
+      if (!keys.length) return '<div class="empty">当てはまる食品はありません</div>';
+    }
     if (!keys.length) return '<div class="empty">固定した食品はありません</div>';
     return keys.map(function (key) {
       var parts = Object.keys(items[key]).map(function (k) { return global.Foods.meta(k)[0]; });
@@ -311,17 +317,25 @@
     S.Anchors.all().then(function (v) {
       var sum = anchorSummary(v);
       var body = A().openSheet('固定した推定値',
+        '<input type="text" id="anchorQ" placeholder="食品名で絞り込み" autocomplete="off" style="margin-bottom:8px">' +
         '<div class="tiny muted" style="margin-bottom:8px">' + sum.names.toLocaleString() + '品・' +
         sum.keys.toLocaleString() + '項目。下に並ぶ栄養素を固定しています。「固定を外す」と、その食品は' +
         '次の記録から今の推定の作りで推定します（記録済みの値は変わりません）。</div>' +
         '<div id="anchorList">' + anchorRows(v) + '</div>', { tall: true });
+      var current = v, q = body.querySelector('#anchorQ'), timer = 0;
+      // 一覧だけを描き直す(シート全体を描き直すとキーボードが閉じる)
+      function redraw() {
+        var list = body.querySelector('#anchorList');
+        if (list) list.innerHTML = anchorRows(current, q ? q.value : '');
+      }
+      if (q) q.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(redraw, 150); });
       body.addEventListener('click', function (ev) {
         var b = ev.target.closest('[data-unanchor]');
         if (!b) return;
         S.Anchors.remove(b.getAttribute('data-unanchor')).then(function (next) {
           if (global.Estimate && global.Estimate.setAnchors) global.Estimate.setAnchors(next ? next.items : {});
-          var list = body.querySelector('#anchorList');
-          if (list) list.innerHTML = anchorRows(next);
+          current = next;
+          redraw();
           A().toast('固定を外しました');
         });
       });
