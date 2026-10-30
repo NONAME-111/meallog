@@ -334,6 +334,11 @@
         return S.migrateProductFill();
       }).then(function (p) {
         if (p && p.changed) toast('記録済みの ' + p.changed + '件に、商品の栄養成分を補いました', 5000);
+      }).catch(function (e) { void e; }).then(function () {
+        // v54で不明に戻った栄養素などを、似た食品からの推定で補う(一度だけ)
+        return S.migrateSimilarFill();
+      }).then(function (f) {
+        if (f && f.changed) toast('記録済みの ' + f.changed + '件に、似た食品から栄養素を補いました', 5000);
         return reloadSettings().then(function () { if (!sheetOpen()) render(); });
       }).catch(function (e) { void e; });
       global.Steps.receiveUrl().then(function (count) {

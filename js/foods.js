@@ -842,6 +842,7 @@
     load: load, loadCommon: loadCommon, search: search, byId: byId, scale: scale, sum: sum,
     searchCommon: searchCommon, commonById: commonById,
     loadYomi: loadYomi, kanaContains: kanaContains, isKanaQuery: isKanaQuery,
+    readingsOf: function (ch) { return (YOMI && YOMI[ch]) || null; },
     queryVariants: queryVariants, queryTerms: queryTerms, nameMatcher: nameMatcher,
     loadProducts: loadProducts, productFor: productFor, mergeProduct: mergeProduct,
     mergeProductEstimate: mergeProductEstimate,

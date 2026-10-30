@@ -725,6 +725,7 @@
     fruitEstimateMigrated: 0,     // 記録済みの果物に成分表の値を補った回(1=v42 空のものだけ / 2=v43 古い推定も)
     estimateCleanupMigrated: 0,   // 推定値を再検査した版。v54は対応食品・重量の整合性も検査
     productFillMigrated: 0,       // 商品マスタに足した食品を記録済みの分にも当てた版(45=v45)
+    similarFillMigrated: 0,       // 欠けた栄養素を似た食品からの推定で補った版(55=v55)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -1037,7 +1038,96 @@
     });
   }
 
-  /* 裏で動かす移行の書き込み(migrateEstimateCleanup / migrateProductFill で共通)。
+  /*
+     v55: 記録済みの食事・マイ食品・セットのうち、栄養素が欠けているもの(カロリーはある)を、
+     似た食品からの推定(Estimate.fill)で一度だけ補う。v54は対応表で決まらない推定値を不明に戻したため、
+     ビタミン・ミネラルが不明の記録が増え、採点できない日がほとんどになった(2026-10-30 利用者報告)。
+     欠けている項目だけを足し、実測・手入力・すでにある推定値は変えない。サプリは補わない。
+     食品DBを読めなかったときは印を付けず、次の起動でまた試す。
+  */
+  var SIMILAR_FILL_VERSION = 55;
+  function lacksNutrients(rec) {
+    var n = rec && rec.nutrients;
+    if (!n || typeof n.kcal !== 'number' || !(n.kcal > 0)) return false;
+    return global.Foods.KEYS.some(function (k) { return k !== 'kcal' && typeof n[k] !== 'number'; });
+  }
+  function migrateSimilarFill() {
+    return Settings.get().then(function (st) {
+      if ((st.similarFillMigrated || 0) >= SIMILAR_FILL_VERSION) {
+        return { entries: 0, myfoods: 0, combos: 0, changed: 0, skipped: true };
+      }
+      var estimator = global.Estimate;
+      if (!estimator || !estimator.fill) return Promise.reject(new Error('推定の処理を読み込めませんでした'));
+      return Promise.all([estimator.load(), allEntries(), MyFoods.all(), Combos.all()]).then(function (r) {
+        var entries = (r[1] || []).filter(notSkip), myfoods = r[2] || [], combos = r[3] || [];
+        // 同じ食品を同じ量で何度も記録しているので、同じ中身の計算は使い回す(1万6千件で約4分の1に)
+        var memo = {};
+        function fillOne(rec, unit, amount) {
+          var key = JSON.stringify([rec.name, unit, amount, rec.nutrients, rec.est || null]);
+          if (!memo[key]) memo[key] = estimator.fill(rec.name, rec.nutrients, { unit: unit, amount: amount, est: rec.est || null });
+          return memo[key]
+            .then(function (filled) {
+              if (!filled) return null;
+              var next = {};
+              for (var k in rec) next[k] = rec[k];
+              // 使い回した結果を記録どうしで共有しないよう写しを持たせる
+              next.nutrients = JSON.parse(JSON.stringify(filled.nutrients));
+              next.est = JSON.parse(JSON.stringify(filled.est));
+              return next;
+            });
+        }
+        var jobs = [];
+        entries.filter(lacksNutrients).forEach(function (rec) {
+          jobs.push({ kind: 'entries', rec: rec, unit: rec.unit || 'g', amount: rec.amount || 1 });
+        });
+        myfoods.filter(lacksNutrients).forEach(function (rec) {
+          var serving = rec.basis === 'serving';
+          jobs.push({ kind: 'myfoods', rec: rec, unit: serving ? (rec.servingLabel || '食') : 'g', amount: serving ? 1 : 100 });
+        });
+        // 計算は200件ずつにして、合間に画面の処理を挟む(migrateEstimateCleanup と同じ)
+        var done = { entries: [], myfoods: [] }, at = 0;
+        function step() {
+          var slice = jobs.slice(at, at + 200);
+          if (!slice.length) return Promise.resolve();
+          return Promise.all(slice.map(function (job) {
+            return fillOne(job.rec, job.unit, job.amount).then(function (next) {
+              if (next) done[job.kind].push({ next: next, before: JSON.stringify(job.rec) });
+            });
+          })).then(function () {
+            at += slice.length;
+            return new Promise(function (resolve) { setTimeout(resolve, 0); }).then(step);
+          });
+        }
+        var comboJobs = combos.filter(function (combo) {
+          return (combo.items || []).some(lacksNutrients);
+        }).map(function (combo) {
+          var items = combo.items || [];
+          return Promise.all(items.map(function (item) {
+            return lacksNutrients(item) ? fillOne(item, item.unit || 'g', item.amount || 1) : null;
+          })).then(function (nextItems) {
+            if (!nextItems.some(Boolean)) return null;
+            var next = {};
+            for (var key in combo) next[key] = combo[key];
+            next.items = items.map(function (item, i) { return nextItems[i] || item; });
+            return { next: next, before: JSON.stringify(combo) };
+          });
+        });
+        return step().then(function () {
+          return Promise.all([done.entries, done.myfoods, Promise.all(comboJobs)]);
+        });
+      }).then(function (groups) {
+        var ce = groups[0], cf = groups[1], cc = groups[2].filter(Boolean);
+        return writeGuarded(ce, cf, cc, { similarFillMigrated: SIMILAR_FILL_VERSION }).then(function (written) {
+          return {
+            entries: written.entries, myfoods: written.myfoods, combos: written.combos,
+            changed: written.entries + written.myfoods + written.combos
+          };
+        });
+      });
+    });
+  }
+
+  /* 裏で動かす移行の書き込み(migrateEstimateCleanup / migrateProductFill / migrateSimilarFill で共通)。
      ce/cf/cc は {next: 書きたい記録, before: 読んだときの記録全体の写し} の配列(食事記録/マイ食品/セット)。
      そのあいだに利用者が記録を直しても上書きしないよう、書き込む直前に読み直し、
      読んだときから栄養素が変わっていない記録だけを書く。最後に設定を読み直して印だけを足す。 */
@@ -1250,6 +1340,7 @@
     migrateFruitEstimate: migrateFruitEstimate,
     migrateEstimateCleanup: migrateEstimateCleanup,
     migrateProductFill: migrateProductFill,
+    migrateSimilarFill: migrateSimilarFill,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);
