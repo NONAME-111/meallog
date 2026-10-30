@@ -726,6 +726,7 @@
     estimateCleanupMigrated: 0,   // 推定値を再検査した版。v54は対応食品・重量の整合性も検査
     productFillMigrated: 0,       // 商品マスタに足した食品を記録済みの分にも当てた版(45=v45)
     similarFillMigrated: 0,       // 欠けた栄養素を似た食品からの推定で補った版(55=v55)
+    anchorMigrated: 0,            // 推定値の変化が小さい食品名の栄養素を固定した版(56=v56)
     trash: [],                // 消した記録の控え(最大40件)。設定から戻せる
     lastTab: 'meal',
     graphRange: 30,          // グラフの期間(14/30/90/365)。次に開いたときも同じ期間で出す
@@ -758,6 +759,37 @@
         };
         return true;
       }).then(function () { return cur; });
+    }
+  };
+
+  /* 推定値の固定(アンカー。v56)。設定と同じ保存先の 'anchors' に
+     {items: {正規化した食品名: {栄養素: 1kcalあたりの量}}, labels: {正規化した食品名: 表示名}, made, at} で持つ。
+     食品名は個人の記録なので端末の中だけに置く(公開データに入れない)。書き出し・取り込みには含める */
+  var Anchors = {
+    all: function () {
+      return run('settings', 'readonly', function (s) { return reqp(s.get('anchors')); })
+        .then(function (rec) { return (rec && rec.v) || null; });
+    },
+    get: function () {
+      return Anchors.all().then(function (v) { return v ? (v.items || {}) : null; });
+    },
+    put: function (v) {
+      return run('settings', 'readwrite', function (s) { s.put({ k: 'anchors', v: v }); return true; });
+    },
+    // 1つの食品名の固定を外す。読み出しと書き込みは1つの取引で
+    remove: function (key) {
+      var next = null;
+      return run('settings', 'readwrite', function (s) {
+        var req = s.get('anchors');
+        req.onsuccess = function () {
+          var v = (req.result && req.result.v) || { items: {}, labels: {} };
+          delete v.items[key];
+          if (v.labels) delete v.labels[key];
+          next = v;
+          s.put({ k: 'anchors', v: v });
+        };
+        return true;
+      }).then(function () { return next; });
     }
   };
 
@@ -1127,6 +1159,111 @@
     });
   }
 
+  /*
+     v56: 記録済みの食品名ごとに、v53 の推定(js/estimate-v53.js。比較専用でこのときだけ読む)と今の推定を比べ、
+     差が ±25% 以内の栄養素を固定する(Estimate.anchorValues)。利用者の指示(2026-10-30)
+     「v55までの栄養素補正で修正幅が小さい食品・メニューをアンカーとして固定」。
+     記録そのものは書き換えない(値は今の推定と同じ)。以後の推定と、推定の作りを変えた版の計算し直しで、
+     固定した栄養素が動かなくなる。代表は、その名前の記録のうち分かっている項目の組み合わせが一番多いもの。
+     比較用の処理を読めなかったとき(オフラインなど)は印を付けず、次の起動でまた試す。
+     書き出しから戻して固定値が無くなったときも、もう一度作る
+  */
+  var ANCHOR_VERSION = 56;
+  function loadLegacyEstimator() {
+    if (global.EstimateV53) return Promise.resolve(global.EstimateV53);
+    return new Promise(function (resolve, reject) {
+      var el = document.createElement('script');
+      el.src = 'js/estimate-v53.js';
+      el.onload = function () {
+        if (global.EstimateV53) resolve(global.EstimateV53);
+        else reject(new Error('比較用の推定処理を読み込めませんでした'));
+      };
+      el.onerror = function () {
+        el.parentNode.removeChild(el);
+        reject(new Error('比較用の推定処理を読み込めませんでした'));
+      };
+      document.head.appendChild(el);
+    });
+  }
+  function migrateAnchors() {
+    return Promise.all([Settings.get(), Anchors.all()]).then(function (r) {
+      if ((r[0].anchorMigrated || 0) >= ANCHOR_VERSION && r[1]) {
+        return { names: 0, keys: 0, skipped: true };
+      }
+      var F = global.Foods, estimator = global.Estimate;
+      if (!estimator || !estimator.anchorValues) return Promise.reject(new Error('推定の処理を読み込めませんでした'));
+      return Promise.all([estimator.load(), loadLegacyEstimator(), allEntries(), MyFoods.all(), Combos.all()]).then(function (q) {
+        var legacy = q[1], entries = (q[2] || []).filter(notSkip), myfoods = q[3] || [], combos = q[4] || [];
+        return legacy.load().then(function () {
+          var groups = {};
+          function add(rec, unit, amount) {
+            var n = rec && rec.nutrients;
+            if (!rec || !rec.name || !n || typeof n.kcal !== 'number' || !(n.kcal > 0)) return;
+            if (rec.est && rec.est.method === 'manual-reference') return;   // 利用者が選んだ参照食品はそのまま
+            var keys = (rec.est && rec.est.keys) || [], measured = {};
+            for (var k in n) {
+              if (typeof n[k] !== 'number' || !isFinite(n[k])) continue;
+              if (k === 'kcal' || keys.indexOf(k) === -1) measured[k] = n[k];
+            }
+            if (keys.indexOf('carb') !== -1 || keys.indexOf('fiber') !== -1) delete measured.sugar;
+            var name = F.norm(rec.name), pattern = Object.keys(measured).sort().join(',');
+            var g = groups[name] || (groups[name] = {});
+            var p = g[pattern] || (g[pattern] = { n: 0, rec: rec, measured: measured, unit: unit, amount: amount });
+            p.n++;
+          }
+          entries.forEach(function (rec) { add(rec, rec.unit || 'g', rec.amount || 1); });
+          myfoods.forEach(function (rec) {
+            var serving = rec.basis === 'serving';
+            add(rec, serving ? (rec.servingLabel || '食') : 'g', serving ? 1 : 100);
+          });
+          combos.forEach(function (combo) {
+            (combo.items || []).forEach(function (item) { add(item, item.unit || 'g', item.amount || 1); });
+          });
+          var jobs = Object.keys(groups).map(function (name) {
+            var best = null;
+            for (var key in groups[name]) if (!best || groups[name][key].n > best.n) best = groups[name][key];
+            return { name: name, rep: best };
+          });
+          var items = {}, labels = {}, keyCount = 0, at = 0;
+          // 100件ずつ計算して、合間に画面の処理を挟む
+          function step() {
+            var slice = jobs.slice(at, at + 100);
+            if (!slice.length) return Promise.resolve();
+            return Promise.all(slice.map(function (job) {
+              return estimator.anchorValues(job.rep.rec.name, job.rep.measured,
+                { unit: job.rep.unit, amount: job.rep.amount }, legacy).then(function (per) {
+                if (!per) return;
+                items[job.name] = per;
+                labels[job.name] = job.rep.rec.name;
+                keyCount += Object.keys(per).length;
+              });
+            })).then(function () {
+              at += slice.length;
+              return new Promise(function (resolve) { setTimeout(resolve, 0); }).then(step);
+            });
+          }
+          return step().then(function () {
+            return Anchors.put({ items: items, labels: labels, made: 'v' + ANCHOR_VERSION, at: new Date().toISOString() });
+          }).then(function () {
+            // 設定は読み直して印だけを足す(writeGuarded と同じ)
+            return run('settings', 'readwrite', function (store) {
+              var sreq = store.get('main');
+              sreq.onsuccess = function () {
+                var cur = (sreq.result && sreq.result.v) || {};
+                cur.anchorMigrated = ANCHOR_VERSION;
+                store.put({ k: 'main', v: cur });
+              };
+              return true;
+            });
+          }).then(function () {
+            estimator.setAnchors(items);
+            return { names: Object.keys(items).length, keys: keyCount, total: jobs.length };
+          });
+        });
+      });
+    });
+  }
+
   /* 裏で動かす移行の書き込み(migrateEstimateCleanup / migrateProductFill / migrateSimilarFill で共通)。
      ce/cf/cc は {next: 書きたい記録, before: 読んだときの記録全体の写し} の配列(食事記録/マイ食品/セット)。
      そのあいだに利用者が記録を直しても上書きしないよう、書き込む直前に読み直し、
@@ -1290,13 +1427,16 @@
       run('daily', 'readonly', function (s) { return reqp(s.getAll()); }),
       run('combos', 'readonly', function (s) { return reqp(s.getAll()); }),
       // 読み取った商品の控え。機種変更のときに引き継げるよう、書き出しにも入れる
-      run('products', 'readonly', function (s) { return reqp(s.getAll()); })
+      run('products', 'readonly', function (s) { return reqp(s.getAll()); }),
+      Anchors.all()
     ]).then(function (r) {
-      return {
+      var out = {
         app: 'meallog', version: 4, exportedAt: new Date().toISOString(),
         entries: r[0], body: r[1], exercise: r[2], myfoods: r[3], settings: r[4],
         daily: r[5], combos: r[6], products: r[7]
       };
+      if (r[8]) out.anchors = r[8];   // 推定値の固定(v56)
+      return out;
     });
   }
 
@@ -1317,7 +1457,15 @@
         (data.daily || []).forEach(function (r) { da.put(r); });
         (data.combos || []).forEach(function (r) { cb.put(r); });
         if (data.settings) se.put({ k: 'main', v: data.settings });
+        // 推定値の固定(v56)。入っていない書き出しで置き換えたときは消し、次の起動で作り直す
+        if (data.anchors) se.put({ k: 'anchors', v: data.anchors });
+        else if (replace) se.delete('anchors');
         return true;
+      }).then(function (ok) {
+        if (global.Estimate && global.Estimate.setAnchors) {
+          global.Estimate.setAnchors(data.anchors ? data.anchors.items : null);
+        }
+        return ok;
       });
   }
 
@@ -1325,6 +1473,12 @@
     invalidate();
     return run(['entries', 'body', 'exercise', 'myfoods', 'daily', 'combos', 'products'], 'readwrite', function (st) {
       st.forEach(function (s) { s.clear(); });
+      return true;
+    }).then(function () {
+      // 推定値の固定(食品名の一覧)も消す
+      return run('settings', 'readwrite', function (s) { s.delete('anchors'); return true; });
+    }).then(function () {
+      if (global.Estimate && global.Estimate.setAnchors) global.Estimate.setAnchors({});
       return true;
     });
   }
@@ -1341,6 +1495,7 @@
     migrateEstimateCleanup: migrateEstimateCleanup,
     migrateProductFill: migrateProductFill,
     migrateSimilarFill: migrateSimilarFill,
+    migrateAnchors: migrateAnchors, Anchors: Anchors,
     DEFAULT_SETTINGS: DEFAULT_SETTINGS
   };
 })(window);

@@ -48,6 +48,11 @@
       };
       buildSimilar(MODEL, db.foods || [], profiles);
       return MODEL;
+    }).then(function (model) {
+      var S = global.Store;
+      if (!S || !S.Anchors || ANCHORS) return model;
+      return S.Anchors.get().then(function (map) { if (!ANCHORS) setAnchors(map); return model; },
+        function () { return model; });
     }).catch(function (e) { loading = null; throw e; });
     return loading;
   }
@@ -948,6 +953,50 @@
     }, opts.est);
   }
 
+  /* ================= 推定値の固定(アンカー。v56) =================
+     利用者の指示(2026-10-30):「v55までの栄養素補正で修正幅が小さい食品・メニューをアンカーとして固定」。
+     推定の作りを変えるたびに記録の推定値が上下していた(v53→v55 で鉄の推定の43%が3割以上動いた)。
+     記録済みの食品名ごとに v53 の推定(estimate-v53.js)と今の推定を比べ、差が ±25% 以内の栄養素だけ、
+     今の値を「1kcalあたりの量」で固定する(差の大きいものは固定せず、今後の改良を反映させる)。
+     ±25% は、v55の答え合わせで1品ごとの推定誤差が1.2〜1.5倍あるため、その範囲に収まった値は
+     落ち着いているとみなした値。ごく少ない量どうしの差を大きく見ないよう、1食600kcalあたり1日分の5%を足して比べる。
+     固定値は端末の中だけ(Store.Anchors。食品名は個人の記録なので公開データに入れない) */
+  var ANCHORS = null;                    // { 正規化した食品名: { 栄養素: 1kcalあたりの量 } }
+  var ANCHOR_LIMIT = Math.log(1.25);
+  var DAILY_REF = {
+    protein: 65, fat: 60, carb: 300, fiber: 21, salt: 7.5, satfat: 16, monofat: 20, polyfat: 15, n3: 2, n6: 10,
+    chol: 300, k: 2500, ca: 700, mg: 340, fe: 7.5, zn: 10, vita: 850, vitd: 8.5, vite: 6, vitb1: 1.3, vitb2: 1.5,
+    niacin: 14, vitb6: 1.3, vitb12: 2.4, folate: 240, vitc: 100
+  };
+  function anchorFor(name) { return (ANCHORS && ANCHORS[F.norm(name)]) || null; }
+  function setAnchors(map) { ANCHORS = map || null; }
+
+  /* 1つの食品名について、古い推定(legacy = EstimateV53)と今の推定を比べ、固定してよい栄養素の
+     1kcalあたりの量を返す。固定するものが無ければ null。known は実測・手入力の値だけ */
+  function anchorValues(name, known, opts, legacy) {
+    known = known || {};
+    if (!finite(known.kcal) || known.kcal <= 0) return Promise.resolve(null);
+    var o = { unit: opts && opts.unit, amount: opts && opts.amount, est: null };
+    return Promise.all([
+      legacy.fill(name, known, o),
+      fill(name, known, { unit: o.unit, amount: o.amount, est: null, noAnchor: true })
+    ]).then(function (r) {
+      var older = r[0], newer = r[1];
+      if (!older || !newer || !newer.est) return null;
+      var per = {}, count = 0;
+      newer.est.keys.forEach(function (k) {
+        if (k === 'sugar' || !DAILY_REF[k]) return;      // 糖質は炭水化物と食物繊維から計算し直す
+        var a = older.nutrients[k], b = newer.nutrients[k];
+        if (!finite(a) || !finite(b)) return;
+        var floor = DAILY_REF[k] * 0.05 * known.kcal / 600;
+        if (Math.abs(Math.log((b + floor) / (a + floor))) > ANCHOR_LIMIT) return;
+        per[k] = b / known.kcal;
+        count++;
+      });
+      return count ? per : null;
+    });
+  }
+
   function fill(name, known, opts) {
     opts = opts || {};
     known = known || {};
@@ -968,52 +1017,74 @@
         opts = fresh;
       }
       var out = copyKnown(known), added = [];
-      var needsNutrients = F.KEYS.some(function (k) { return k !== 'kcal' && !finite(out[k]); });
-      if (!needsNutrients) return null;
+      /* 固定した推定値(アンカー。v56)があれば、その栄養素はそれを使う。推定の作りを変えても動かない。
+         実測・手入力の値(known にある項目)は固定値より優先する */
+      var anchor = opts.noAnchor ? null : anchorFor(name), anchored = [];
+      if (anchor) {
+        for (var ak in anchor) {
+          if (finite(out[ak]) || !finite(anchor[ak])) continue;
+          out[ak] = round(anchor[ak] * out.kcal);
+          added.push(ak);
+          anchored.push(ak);
+        }
+      }
+      var result = (function () {
+        var needsNutrients = F.KEYS.some(function (k) { return k !== 'kcal' && !finite(out[k]); });
+        if (!needsNutrients) return null;
 
-      /* 対応表(rules)で食品と量まで決まるものは、その食品で補う。
-         決まらないもの(カロリーしか分からない・PFCが代表食品と合わない・対応表に無い)は、
-         似た食品から補う(similar。v54までは値を不明のままにしていた)。
-         2026-09-22の実測では、全食品の中央値で補うと菓子のカリウム4.4倍などずれたため、
-         名前の合う食品をPFCが合う割合で組み合わせ、名前で見つからなければ同じ食品群から選ぶ */
-      if (rule && rule.recipe) {
-        var recipe = recipeNutrients(rule, model);
-        if (recipe && finite(recipe.nutrients.kcal) && recipe.nutrients.kcal > 0) {
-          var recipeScale = out.kcal / recipe.nutrients.kcal;
-          if (fitsReference(out, recipe.nutrients, recipeScale)) {
-            addFromRecipe(out, recipe.nutrients, recipeScale, added);
+        /* 対応表(rules)で食品と量まで決まるものは、その食品で補う。
+           決まらないもの(カロリーしか分からない・PFCが代表食品と合わない・対応表に無い)は、
+           似た食品から補う(similar。v54までは値を不明のままにしていた)。
+           2026-09-22の実測では、全食品の中央値で補うと菓子のカリウム4.4倍などずれたため、
+           名前の合う食品をPFCが合う割合で組み合わせ、名前で見つからなければ同じ食品群から選ぶ */
+        if (rule && rule.recipe) {
+          var recipe = recipeNutrients(rule, model);
+          if (recipe && finite(recipe.nutrients.kcal) && recipe.nutrients.kcal > 0) {
+            var recipeScale = out.kcal / recipe.nutrients.kcal;
+            if (fitsReference(out, recipe.nutrients, recipeScale)) {
+              addFromRecipe(out, recipe.nutrients, recipeScale, added);
+              return finish(out, known, added, {
+                conf: 'mid', ref: recipe.refs.join('+'), cat: rule.cat || '', method: 'recipe'
+              }, opts.est);
+            }
+          }
+        }
+
+        if (rule && rule.ref && model.byId[rule.ref]) {
+          var grams = ruleGrams(rule, opts);
+          /* カロリーしか分かっていないときは、特定の食品に当てはめてカロリー比例で
+             伸ばさない。脂や砂糖でカロリーだけ高い食品だと、参照先の重さを何倍にも
+             見積もってしまい、栄養素がその倍率でついてしまう
+             (実測: 肉類の鉄4.8倍・ビタミンA4.1倍、菓子のカリウム4.4倍)。
+             重さが決まっている規則(grams)はそのまま使ってよい */
+          var knownMacros = MACROS.filter(function (k) { return finite(out[k]); }).length;
+          var method = 'dictionary', conf = 'mid';
+          if (grams == null && knownMacros >= 2) grams = fitGrams(out, model.byId[rule.ref]);
+          /* PFCが分かっていて代表食品と合わないもの(果物味の加工品など)は、カロリーで伸ばさない。
+             カロリーしか分からない生の果物だけ、カロリーから重さを逆算する */
+          if (grams == null && knownMacros < 2) {
+            grams = kcalGrams(rule, out, model.byId[rule.ref], name);
+            if (grams != null) { method = 'dictionary-kcal'; conf = 'mid'; }
+          }
+          if (grams != null && fitsReference(out, model.byId[rule.ref], grams / 100)) {
+            addFromFood(out, model.byId[rule.ref], grams, added);
             return finish(out, known, added, {
-              conf: 'mid', ref: recipe.refs.join('+'), cat: rule.cat || '', method: 'recipe'
+              conf: conf, ref: rule.ref, cat: rule.cat || '', method: method
             }, opts.est);
           }
         }
-      }
 
-      if (rule && rule.ref && model.byId[rule.ref]) {
-        var grams = ruleGrams(rule, opts);
-        /* カロリーしか分かっていないときは、特定の食品に当てはめてカロリー比例で
-           伸ばさない。脂や砂糖でカロリーだけ高い食品だと、参照先の重さを何倍にも
-           見積もってしまい、栄養素がその倍率でついてしまう
-           (実測: 肉類の鉄4.8倍・ビタミンA4.1倍、菓子のカリウム4.4倍)。
-           重さが決まっている規則(grams)はそのまま使ってよい */
-        var knownMacros = MACROS.filter(function (k) { return finite(out[k]); }).length;
-        var method = 'dictionary', conf = 'mid';
-        if (grams == null && knownMacros >= 2) grams = fitGrams(out, model.byId[rule.ref]);
-        /* PFCが分かっていて代表食品と合わないもの(果物味の加工品など)は、カロリーで伸ばさない。
-           カロリーしか分からない生の果物だけ、カロリーから重さを逆算する */
-        if (grams == null && knownMacros < 2) {
-          grams = kcalGrams(rule, out, model.byId[rule.ref], name);
-          if (grams != null) { method = 'dictionary-kcal'; conf = 'mid'; }
+        return similar(name, out, known, added, rule, model, opts);
+      })();
+      if (anchored.length) {
+        if (!result) {
+          result = finish(out, known, added, { conf: 'high', ref: '', cat: '固定した値', method: 'anchor' }, opts.est);
+        } else if (result.est) {
+          result.est.method = 'anchor+' + result.est.method;
         }
-        if (grams != null && fitsReference(out, model.byId[rule.ref], grams / 100)) {
-          addFromFood(out, model.byId[rule.ref], grams, added);
-          return finish(out, known, added, {
-            conf: conf, ref: rule.ref, cat: rule.cat || '', method: method
-          }, opts.est);
-        }
+        if (result && result.est) result.est.anchored = anchored.slice();
       }
-
-      return similar(name, out, known, added, rule, model, opts);
+      return result;
     });
   }
 
@@ -1156,6 +1227,7 @@
     recalibrateChickenLiver: recalibrateChickenLiver,
     needsFruitFill: needsFruitFill, fillFruit: fillFruit,
     // 確かめ用: 名前で当たった食品の一覧
+    setAnchors: setAnchors, anchorFor: anchorFor, anchorValues: anchorValues,
     _nameInfo: function (name) { return MODEL ? nameInfo(name, MODEL) : null; },
     _trace: function (on) { var t = TRACE; TRACE = on ? [] : null; return t; },
     _variant: function (v, lambda, cap) {

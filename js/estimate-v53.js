@@ -1,0 +1,531 @@
+/* estimate-v53.js - v53 の推定処理(比較専用。値の推定には使わない)
+   v56 の「推定値の固定(アンカー)」で、記録済みの食品名ごとに v53 と今の推定を比べ、
+   差の小さい栄養素だけを固定するために、一度きりの処理(Store.migrateAnchors)でだけ読み込む。
+   中身は v53 / Claude ver45 の js/estimate.js と同じ。辞書は data/food-categories-v53.json(v53当時)を使い、
+   window.EstimateV53 に置く(今の window.Estimate は上書きしない)。変更しないこと */
+(function (global) {
+  'use strict';
+
+  var F = global.Foods;
+  var MODEL = null, loading = null;
+  var MACROS = ['protein', 'fat', 'carb'];
+  var CONF_RANK = { high: 1, mid: 2, low: 3 };
+
+  function finite(v) { return typeof v === 'number' && isFinite(v); }
+  function round(v) { return Math.round(v * 1000) / 1000; }
+
+  function median(values) {
+    values = values.filter(finite).sort(function (a, b) { return a - b; });
+    if (!values.length) return null;
+    var m = Math.floor(values.length / 2);
+    return values.length % 2 ? values[m] : (values[m - 1] + values[m]) / 2;
+  }
+
+  function load() {
+    if (MODEL) return Promise.resolve(MODEL);
+    if (loading) return loading;
+    loading = Promise.all([F.load(), fetch('data/food-categories-v53.json').then(function (r) {
+      if (!r.ok) throw new Error('v53の辞書を読み込めませんでした (' + r.status + ')');
+      return r.json();
+    })]).then(function (r) {
+      var db = r[0], cats = r[1] || {};
+      var byId = {}, candidates = [];
+      (db.foods || []).forEach(function (food) {
+        byId[food.id] = food;
+        if (!finite(food.kcal) || food.kcal <= 0) return;
+        var perKcal = {};
+        F.KEYS.forEach(function (k) {
+          if (k !== 'kcal' && finite(food[k])) perKcal[k] = food[k] * 100 / food.kcal;
+        });
+        candidates.push({ food: food, perKcal: perKcal });
+      });
+
+      var medians = {};
+      F.KEYS.forEach(function (k) {
+        if (k === 'kcal') return;
+        medians[k] = median(candidates.map(function (c) { return c.perKcal[k]; }));
+      });
+
+      /* 食品群ごとの「カロリーあたりの栄養素」の中央値。
+         カロリーしか分からない食品を補うときに使う。
+         全食品の中央値だと、菓子にカリウムが4.4倍・ビタミンB2が5.6倍、
+         し好飲料にビタミンB1が6.1倍ついてしまった(2026-09-22 実測)。 */
+      var groupMedians = {};
+      var byGroup = {};
+      candidates.forEach(function (c) {
+        var g = c.food.g;
+        if (!g) return;
+        (byGroup[g] = byGroup[g] || []).push(c);
+      });
+      Object.keys(byGroup).forEach(function (g) {
+        var list = byGroup[g];
+        if (list.length < 5) return;      // 少なすぎる群は当てにならないので使わない
+        var m = {};
+        F.KEYS.forEach(function (k) {
+          if (k === 'kcal') return;
+          m[k] = median(list.map(function (c) { return c.perKcal[k]; }));
+        });
+        groupMedians[g] = m;
+      });
+
+      var rules = (cats.rules || []).map(function (rule) {
+        var copy = {};
+        for (var k in rule) copy[k] = rule[k];
+        copy._kw = (rule.kw || []).map(F.norm).filter(Boolean);
+        copy._not = (rule.not || []).map(F.norm).filter(Boolean);
+        return copy;
+      });
+
+      MODEL = {
+        byId: byId,
+        candidates: candidates,
+        medians: medians,
+        groupMedians: groupMedians,
+        rules: rules,
+        excludes: (cats.excludes || []).map(F.norm).filter(Boolean)
+      };
+      return MODEL;
+    });
+    return loading;
+  }
+
+  function supplement(name, model) {
+    var n = F.norm(name);
+    if (/さぷり|かぷせる|たぶれっと|ちゅあぶる|びたみん剤|栄養補助食品|医薬品|ぷろていん|かりうむのめぐり/.test(n)) return true;
+    if (/1日(?:分)?[0-9]*粒/.test(n) || /[0-9]錠/.test(n)) return true;
+    return model.excludes.some(function (x) { return n.indexOf(x) !== -1; });
+  }
+
+  function matchingRule(name, model) {
+    var n = F.norm(name);
+    for (var i = 0; i < model.rules.length; i++) {
+      var rule = model.rules[i];
+      if (rule._not.some(function (x) { return n.indexOf(x) !== -1; })) continue;
+      if (rule._kw.some(function (x) { return n.indexOf(x) !== -1; })) return rule;
+    }
+    return null;
+  }
+
+  /* 既知の kcal/P/F/C と代表食品が最も合う相当グラム数（最小二乗解）。 */
+  function fitGrams(known, ref) {
+    var keys = ['kcal'].concat(MACROS), numerator = 0, denominator = 0;
+    keys.forEach(function (k) {
+      if (!finite(known[k]) || !finite(ref[k])) return;
+      var perGram = ref[k] / 100;
+      if (!perGram) return;
+      numerator += known[k] * perGram;
+      denominator += perGram * perGram;
+    });
+    if (!denominator) return null;
+    var grams = numerator / denominator;
+    if (!finite(grams) || grams < 1 || grams > 1500) return null;
+
+    var knownPfc = MACROS.filter(function (k) { return finite(known[k]) && finite(ref[k]); });
+    if (knownPfc.length >= 2) {
+      var residual = knownPfc.reduce(function (sum, k) {
+        var predicted = ref[k] * grams / 100;
+        return sum + Math.abs(predicted - known[k]) / Math.max(Math.abs(known[k]), 1);
+      }, 0) / knownPfc.length;
+      if (residual > 0.40) return null;
+    }
+    return grams;
+  }
+
+  function copyKnown(known) {
+    var out = {};
+    for (var k in (known || {})) if (finite(known[k])) out[k] = known[k];
+    return out;
+  }
+
+  function addFromFood(out, ref, grams, added) {
+    F.KEYS.forEach(function (k) {
+      if (k === 'kcal' || finite(out[k]) || !finite(ref[k])) return;
+      out[k] = round(ref[k] * grams / 100);
+      added.push(k);
+    });
+  }
+
+  function ruleGrams(rule, opts) {
+    opts = opts || {};
+    var amount = Number(opts.amount);
+    if (!finite(amount) || amount <= 0) return null;
+    if (opts.unit === 'g') return amount;
+    if (finite(rule.grams) && rule.grams > 0) return rule.grams * amount;
+    return null;
+  }
+
+  /* 生の果物のように、名前で食品そのものが決まり成分もほぼ一定のもの(規則に byKcal)は、
+     カロリーから重さを逆算してよい。あすけんから移した記録はカロリーしか持たず、
+     ゼスプリ サンゴールドもバナナもビタミンCが空のままだった(2026-10-02 利用者報告)。
+     容量の書いてある名前(350ml など)は飲み物なので使わない。果汁入りのお酒やジュースを
+     生の果物の重さに換算すると、ビタミンCなどが何倍にもつく */
+  function kcalGrams(rule, known, ref, name) {
+    if (!rule || !rule.byKcal || !ref || !finite(known.kcal) || known.kcal <= 0) return null;
+    if (!finite(ref.kcal) || ref.kcal <= 0) return null;
+    if (/[0-9](?:ml|l|ℓ)(?![a-z])/.test(F.norm(name))) return null;
+    var grams = known.kcal * 100 / ref.kcal;
+    return (grams >= 1 && grams <= 1500) ? grams : null;
+  }
+
+  // 主食を含む料理は単一食材へ置き換えず、成分表の複数食材モデルで補う。
+  function recipeNutrients(rule, model) {
+    if (!Array.isArray(rule.recipe) || !rule.recipe.length) return null;
+    var total = {}, refs = [];
+    rule.recipe.forEach(function (part) {
+      var food = model.byId[String(part.ref || '')], grams = Number(part.grams);
+      if (!food || !finite(grams) || grams <= 0) return;
+      refs.push(String(part.ref));
+      F.KEYS.forEach(function (key) {
+        if (!finite(food[key])) return;
+        total[key] = (total[key] || 0) + food[key] * grams / 100;
+      });
+    });
+    return refs.length ? { nutrients: total, refs: refs } : null;
+  }
+
+  function addFromRecipe(out, recipe, scale, added) {
+    F.KEYS.forEach(function (key) {
+      if (key === 'kcal' || finite(out[key]) || !finite(recipe[key])) return;
+      out[key] = round(recipe[key] * scale);
+      added.push(key);
+    });
+  }
+
+  function addPerKcal(out, perKcal, kcal, added) {
+    F.KEYS.forEach(function (k) {
+      if (k === 'kcal' || finite(out[k]) || !finite(perKcal[k])) return;
+      out[k] = round(perKcal[k] * kcal / 100);
+      added.push(k);
+    });
+  }
+
+  function nearest(known, candidates) {
+    var kcal = known.kcal;
+    var available = MACROS.filter(function (k) { return finite(known[k]); });
+    if (available.length < 2) return null;
+    var target = {};
+    available.forEach(function (k) { target[k] = known[k] * 100 / kcal; });
+
+    var rows = [];
+    candidates.forEach(function (c) {
+      var distance = 0;
+      for (var i = 0; i < available.length; i++) {
+        var key = available[i];
+        if (!finite(c.perKcal[key])) return;
+        var diff = c.perKcal[key] - target[key];
+        distance += diff * diff;
+      }
+      rows.push({ c: c, distance: distance });
+    });
+    rows.sort(function (a, b) { return a.distance - b.distance; });
+    rows = rows.slice(0, 15);
+    if (!rows.length) return null;
+
+    var predicted = {};
+    F.KEYS.forEach(function (k) {
+      if (k === 'kcal') return;
+      predicted[k] = median(rows.map(function (x) { return x.c.perKcal[k]; }));
+    });
+    return predicted;
+  }
+
+  function mergeEst(oldEst, added, info) {
+    var keys = [];
+    ((oldEst && oldEst.keys) || []).concat(added).forEach(function (k) {
+      if (keys.indexOf(k) === -1) keys.push(k);
+    });
+    var oldConf = oldEst && oldEst.conf;
+    var conf = oldConf && CONF_RANK[oldConf] > CONF_RANK[info.conf] ? oldConf : info.conf;
+    return {
+      keys: keys,
+      conf: conf,
+      ref: info.ref || (oldEst && oldEst.ref) || '',
+      cat: info.cat || (oldEst && oldEst.cat) || '',
+      method: info.method || (oldEst && oldEst.method) || '',
+      v: 1
+    };
+  }
+
+  function finish(out, original, added, info, oldEst) {
+    if (finite(out.carb) && finite(out.fiber)) {
+      var sugarWasEstimated = added.indexOf('carb') !== -1 || added.indexOf('fiber') !== -1;
+      out.sugar = F.sugarOf(out);
+      if (sugarWasEstimated && added.indexOf('sugar') === -1) added.push('sugar');
+    } else if (finite(original.sugar)) {
+      out.sugar = original.sugar;
+    }
+    if (!added.length) return null;
+    return { nutrients: out, est: mergeEst(oldEst, added, info) };
+  }
+
+  /*
+     戻り値: {nutrients, est}。実測値は一切上書きせず、欠損だけを補う。
+     kcal が無い食品とサプリメントは null のままにする。
+  */
+  /* 果物(byKcal)の記録が、その果物の成分表以外から推定した値を持っているか。
+     v33より前の「記録に栄養素を補う」は、カロリーしか無い食品にも全食品の中央値を当てていた。
+     ゼスプリ サンゴールドの P2.72 F0.79 C7.9 は全食品中央値×54kcalと小数点以下まで一致し、
+     ビタミンCは0.077mgだった(2026-10-02 実機)。手で成分表の食品を紐づけた推定は残す */
+  function staleFruitEstimate(est, rule) {
+    return !!(rule && rule.byKcal && est && est.keys && est.keys.length &&
+      est.method !== 'manual-reference' && String(est.ref || '') !== String(rule.ref || ''));
+  }
+
+  function fill(name, known, opts) {
+    opts = opts || {};
+    known = known || {};
+    return load().then(function (model) {
+      if (!finite(known.kcal) || known.kcal <= 0 || supplement(name, model)) return null;
+      var rule = matchingRule(name, model);
+      /* 古い推定値は「分かっている値」ではないので外し、果物の成分表から推定し直す。
+         実測・手入力の値(est.keys に無いもの)とkcalは残す */
+      if (staleFruitEstimate(opts.est, rule)) {
+        var measured = {};
+        for (var mk in known) {
+          if (mk === 'kcal' || opts.est.keys.indexOf(mk) === -1) measured[mk] = known[mk];
+        }
+        known = measured;
+        var fresh = {};
+        for (var ok in opts) fresh[ok] = opts[ok];
+        fresh.est = null;
+        opts = fresh;
+      }
+      var out = copyKnown(known), added = [];
+      var needsNutrients = F.KEYS.some(function (k) { return k !== 'kcal' && !finite(out[k]); });
+      if (!needsNutrients) return null;
+
+      /* カロリーしか分かっていない食品から、たんぱく質やビタミン・ミネラルを作り出さない。
+         2026-09-22の実測(成分表の食品を伏せて推定させ真値と比較)では、
+           菓子類のカリウム4.4倍・ビタミンB2 5.6倍 / し好飲料のビタミンB1 6.1倍 /
+           肉類の鉄4.8倍 / 逆に野菜類はビタミンC 0.03倍・食物繊維 0.11倍
+         と当てにならず、1日分でも カリウム+26%・亜鉛+26%・たんぱく質+32%(目標比)ずれていた。
+         カロリーあたりの栄養素は食品によって桁が違うので、原理的に当てられない。
+         分からないものは分からないままにし、採点側で「値が不明」として扱う。
+         ただし、重さまで決まっている規則(recipe / grams付きの辞書)は根拠があるので使う。 */
+      var macrosKnown = MACROS.filter(function (k) { return finite(out[k]); }).length;
+      if (macrosKnown < 2) {
+        var pinFood = rule && rule.ref ? model.byId[rule.ref] : null;
+        var pinned = rule && (rule.recipe || (pinFood && (ruleGrams(rule, opts) != null ||
+          kcalGrams(rule, out, pinFood, name) != null)));
+        if (!pinned) return null;
+      }
+
+      if (rule && rule.recipe) {
+        var recipe = recipeNutrients(rule, model);
+        if (recipe && finite(recipe.nutrients.kcal) && recipe.nutrients.kcal > 0) {
+          var recipeScale = out.kcal / recipe.nutrients.kcal;
+          addFromRecipe(out, recipe.nutrients, recipeScale, added);
+          return finish(out, known, added, {
+            conf: 'high', ref: recipe.refs.join('+'), cat: rule.cat || '', method: 'recipe'
+          }, opts.est);
+        }
+      }
+
+      if (rule && rule.ref && model.byId[rule.ref]) {
+        var grams = ruleGrams(rule, opts);
+        /* カロリーしか分かっていないときは、特定の食品に当てはめてカロリー比例で
+           伸ばさない。脂や砂糖でカロリーだけ高い食品だと、参照先の重さを何倍にも
+           見積もってしまい、栄養素がその倍率でついてしまう
+           (実測: 肉類の鉄4.8倍・ビタミンA4.1倍、菓子のカリウム4.4倍)。
+           重さが決まっている規則(grams)はそのまま使ってよい */
+        var knownMacros = MACROS.filter(function (k) { return finite(out[k]); }).length;
+        var method = 'dictionary', conf = 'high';
+        if (grams == null && knownMacros >= 2) grams = fitGrams(out, model.byId[rule.ref]);
+        /* PFCが分かっていて代表食品と合わないもの(果物味の加工品など)は、カロリーで伸ばさない。
+           カロリーしか分からない生の果物だけ、カロリーから重さを逆算する */
+        if (grams == null && knownMacros < 2) {
+          grams = kcalGrams(rule, out, model.byId[rule.ref], name);
+          if (grams != null) { method = 'dictionary-kcal'; conf = 'mid'; }
+        }
+        if (grams != null) {
+          addFromFood(out, model.byId[rule.ref], grams, added);
+          return finish(out, known, added, {
+            conf: conf, ref: rule.ref, cat: rule.cat || '', method: method
+          }, opts.est);
+        }
+      }
+
+      if (rule && rule.grp) {
+        var groupPrediction = nearest(out, model.candidates.filter(function (c) {
+          return c.food.g === rule.grp;
+        }));
+        if (groupPrediction) {
+          addPerKcal(out, groupPrediction, out.kcal, added);
+          return finish(out, known, added, {
+            conf: 'mid', ref: '', cat: rule.cat || '', method: 'group-knn'
+          }, opts.est);
+        }
+        /* PFCが分からないと近傍を選べない(nearest は2つ以上の主要栄養素が要る)。
+           そのときは、せめて同じ食品群の中央値を使う。
+           全食品の中央値だと、菓子・飲料に栄養素が数倍ついてしまう */
+        var gm = model.groupMedians[rule.grp];
+        if (gm) {
+          addPerKcal(out, gm, out.kcal, added);
+          return finish(out, known, added, {
+            conf: 'low', ref: '', cat: rule.cat || '', method: 'group-median'
+          }, opts.est);
+        }
+      }
+
+      var prediction = nearest(out, model.candidates);
+      if (prediction) {
+        addPerKcal(out, prediction, out.kcal, added);
+        return finish(out, known, added, {
+          conf: 'low', ref: '', cat: '', method: 'knn'
+        }, opts.est);
+      }
+
+      // 辞書に当たった食品の群が分かるなら、その群の中央値を使う
+      if (rule && rule.ref && model.byId[rule.ref]) {
+        var refGroup = model.groupMedians[model.byId[rule.ref].g];
+        if (refGroup) {
+          addPerKcal(out, refGroup, out.kcal, added);
+          return finish(out, known, added, {
+            conf: 'low', ref: rule.ref, cat: rule.cat || '', method: 'group-median'
+          }, opts.est);
+        }
+      }
+
+      addPerKcal(out, model.medians, out.kcal, added);
+      return finish(out, known, added, {
+        conf: 'low', ref: '', cat: '全食品中央値', method: 'median'
+      }, opts.est);
+    });
+  }
+
+  function isExcluded(name) {
+    return load().then(function (model) { return supplement(name, model); });
+  }
+
+  // 採点画面の食品区分でも、推定除外と同じサプリ判定を再利用する。
+  // 呼び出し前に load() を待つこと。
+  function isSupplement(name) {
+    return MODEL ? supplement(name, MODEL) : false;
+  }
+
+  /*
+     v14より前は「若どりレバー」も汎用のレバー(食品番号11197)として
+     補完されていた。保存済み記録のうち、その旧推定値だけを取り除き、
+     鶏肝(11232)として再計算する。実測・手入力値とkcalは上書きしない。
+  */
+  function legacyChickenLiver(record) {
+    if (!record || !record.name || !record.nutrients || !record.est) return false;
+    var name = String(record.name);
+    if (!/(?:若どり|若鶏|鶏)\s*レバー/.test(name)) return false;
+    var keys = record.est.keys;
+    if (!Array.isArray(keys) || !keys.length) return false;
+    return String(record.est.ref || '') === '11197' || String(record.est.cat || '') === 'レバー';
+  }
+
+  function recalibrateChickenLiver(record, opts) {
+    if (!legacyChickenLiver(record)) return Promise.resolve(null);
+    opts = opts || {};
+    var estimated = record.est.keys || [], known = {};
+    for (var key in record.nutrients) {
+      if (key === 'kcal' || estimated.indexOf(key) === -1) known[key] = record.nutrients[key];
+    }
+    return fill(record.name, known, {
+      unit: opts.unit || record.unit || 'g',
+      amount: opts.amount == null ? (record.amount || 1) : opts.amount,
+      est: null
+    }).then(function (filled) {
+      if (!filled || String(filled.est && filled.est.ref || '') !== '11232') return null;
+      var next = {};
+      for (var k in record) next[k] = record[k];
+      next.nutrients = filled.nutrients;
+      next.est = filled.est;
+      return next;
+    });
+  }
+
+  /*
+     果物の規則(byKcal)ができる前に記録した果物は、カロリーしか持っていないか、
+     前の版でほかの方法(全食品の中央値など)で推定した値を持っている。
+     それらを拾って、果物の成分表から補い直す。実測・手入力の値とkcalは上書きしない
+     (fill は古い推定値だけを外し、欠けている項目を足す)。呼び出し前に load() を待つこと。
+  */
+  function needsFruitFill(record) {
+    if (!MODEL || !record || !record.name || !record.nutrients) return false;
+    var rule = matchingRule(record.name, MODEL);
+    if (!rule || !rule.byKcal) return false;
+    // ビタミンCが空のものと、前の版でほかの方法(全食品の中央値など)で推定したもの
+    return !finite(record.nutrients.vitc) || staleFruitEstimate(record.est, rule);
+  }
+
+  function fillFruit(record, opts) {
+    if (!needsFruitFill(record)) return Promise.resolve(null);
+    opts = opts || {};
+    return fill(record.name, record.nutrients, {
+      unit: opts.unit || record.unit || 'g',
+      amount: opts.amount == null ? (record.amount || 1) : opts.amount,
+      est: record.est || null
+    }).then(function (filled) {
+      if (!filled || !finite(filled.nutrients.vitc)) return null;
+      var next = {};
+      for (var k in record) next[k] = record[k];
+      next.nutrients = filled.nutrients;
+      next.est = filled.est;
+      return next;
+    });
+  }
+
+  /*
+     v33より前の推定は、カロリーしか無い食品にも全食品の中央値や代表食品のカロリー比を当てていた。
+     9/22の実測で当てにならないと分かった値で、記録・マイ食品・セットに残っていた
+     (2026-10-02 利用者の判断で整理)。推定値(est.keys)を外し、実測・手入力の値とkcalだけから
+     今の決まりで推定し直す。今の決まりで推定できないもの(カロリーしか無い食品など)は値が不明に戻る。
+     手で成分表の食品を紐づけた推定(manual-reference)は利用者の選択なので触らない。
+     変わらないものは null を返す。呼び出し前に load() を待つこと。
+  */
+  function needsReestimate(record) {
+    var est = record && record.est;
+    return !!(record && record.name && record.nutrients && est && est.keys && est.keys.length &&
+      est.method !== 'manual-reference');
+  }
+
+  function sameNutrients(a, b) {
+    var keys = {};
+    for (var k in (a || {})) keys[k] = 1;
+    for (var k2 in (b || {})) keys[k2] = 1;
+    for (var key in keys) {
+      var x = a[key], y = b[key];
+      if (finite(x) !== finite(y)) return false;
+      if (finite(x) && Math.abs(x - y) > 1e-6) return false;
+    }
+    return true;
+  }
+
+  function reestimate(record, opts) {
+    if (!needsReestimate(record)) return Promise.resolve(null);
+    opts = opts || {};
+    var keys = record.est.keys, measured = {};
+    for (var k in record.nutrients) {
+      if (k === 'kcal' || keys.indexOf(k) === -1) measured[k] = record.nutrients[k];
+    }
+    return fill(record.name, measured, {
+      unit: opts.unit || record.unit || 'g',
+      amount: opts.amount == null ? (record.amount || 1) : opts.amount,
+      est: null
+    }).then(function (filled) {
+      var nutrients = filled ? filled.nutrients : measured;
+      var est = filled ? filled.est : null;
+      if (sameNutrients(nutrients, record.nutrients) &&
+          String(est ? est.method : '') === String(record.est.method || '') &&
+          String(est ? est.ref : '') === String(record.est.ref || '')) return null;
+      var next = {};
+      for (var key in record) next[key] = record[key];
+      next.nutrients = nutrients;
+      if (est) next.est = est; else delete next.est;
+      return next;
+    });
+  }
+
+  global.EstimateV53 = {
+    load: load, fill: fill, isExcluded: isExcluded, isSupplement: isSupplement,
+    needsReestimate: needsReestimate, reestimate: reestimate,
+    isLegacyChickenLiver: legacyChickenLiver,
+    recalibrateChickenLiver: recalibrateChickenLiver,
+    needsFruitFill: needsFruitFill, fillFruit: fillFruit,
+    MODEL_VERSION: 2
+  };
+})(window);

@@ -339,6 +339,11 @@
         return S.migrateSimilarFill();
       }).then(function (f) {
         if (f && f.changed) toast('記録済みの ' + f.changed + '件に、似た食品から栄養素を補いました', 5000);
+      }).catch(function (e) { void e; }).then(function () {
+        // 推定値の変化が小さかった食品名の栄養素を固定する(一度だけ。v56)
+        return S.migrateAnchors();
+      }).then(function (a) {
+        if (a && a.names) toast('推定値の変化が小さかった ' + a.names + '品の栄養素を固定しました', 5000);
         return reloadSettings().then(function () { if (!sheetOpen()) render(); });
       }).catch(function (e) { void e; });
       global.Steps.receiveUrl().then(function (count) {

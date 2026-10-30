@@ -1220,7 +1220,8 @@
         ? '<div class="card"><b>一部の栄養素は不明です</b>' +
           '<div class="small muted" style="margin-top:6px">公表値・入力済みの値だけで記録できます。' +
           '不足する項目は、商品表示などで分かる場合に入力してください。</div></div>'
-        : (hasEstimate ? '<div class="estimate-hint">似た食品からの推定値です</div>' : '')) +
+        : (hasEstimate ? '<div class="estimate-hint">' + (/^anchor/.test(pick.est.method || '')
+          ? '推定値です（変化の小さかった栄養素は固定した値）' : '似た食品からの推定値です') + '</div>' : '')) +
       '<button class="btn sub wide nutrient-edit" id="fillNut">' +
         ((pick.ref && pick.ref.type === 'my') ? '栄養素を編集する' : '栄養素を入力する') +
       '</button>' +

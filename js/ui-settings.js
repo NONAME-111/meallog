@@ -159,6 +159,11 @@
       '実測値は変更せず、推定した項目には印を付けます。件数が多いと数十秒かかります。</div>' +
       '<button class="btn line wide" id="btnEnrich">記録に栄養素を補う</button>' +
       '<div class="tiny muted" id="enrichProgress" role="status" hidden style="margin-top:8px"></div>' +
+      '<div class="small muted" style="margin:12px 0 8px">推定値の固定: 記録した食品のうち、v53とv55の推定の差が' +
+      '±25%以内だった栄養素は、その値に固定しています。推定の作りを変えても動きません' +
+      '（差の大きかったものは固定せず、改良を反映します）。実測・手入力の値が入っていればそちらが優先です。</div>' +
+      '<div class="tiny muted" id="anchorInfo">確認しています…</div>' +
+      '<button class="btn line wide" id="btnAnchors" style="margin-top:6px">固定した推定値を見る</button>' +
       '<button class="btn sub wide" id="btnWipe" style="margin-top:14px;color:var(--danger-text)">すべての記録を消す</button>' +
       '</div>';
   }
@@ -229,6 +234,8 @@
     });
     on(view, '#btnCsv', 'click', function () { view.querySelector('#fileCsv').click(); });
     on(view, '#btnEnrich', 'click', doEnrich);
+    on(view, '#btnAnchors', 'click', openAnchors);
+    showAnchorInfo(view);
     on(view, '#fileCsv', 'change', function (e) {
       var f = e.target.files && e.target.files[0];
       e.target.value = '';
@@ -267,6 +274,58 @@
     });
 
     void st;
+  }
+
+  /* ---- 推定値の固定(v56) ---- */
+  function anchorSummary(v) {
+    var items = (v && v.items) || {}, names = Object.keys(items), keys = 0;
+    names.forEach(function (n) { keys += Object.keys(items[n]).length; });
+    return { names: names.length, keys: keys };
+  }
+
+  function showAnchorInfo(view) {
+    var box = view.querySelector('#anchorInfo');
+    if (!box) return;
+    S.Anchors.all().then(function (v) {
+      var sum = anchorSummary(v);
+      box.textContent = v ? ('固定している食品 ' + sum.names.toLocaleString() + '品・栄養素 ' +
+        sum.keys.toLocaleString() + '項目') : 'まだ固定していません（更新後の起動で自動で作ります）';
+    }).catch(function () { box.textContent = ''; });
+  }
+
+  function anchorRows(v) {
+    var items = (v && v.items) || {}, labels = (v && v.labels) || {};
+    var keys = Object.keys(items).sort(function (a, b) {
+      return String(labels[a] || a).localeCompare(String(labels[b] || b), 'ja');
+    });
+    if (!keys.length) return '<div class="empty">固定した食品はありません</div>';
+    return keys.map(function (key) {
+      var parts = Object.keys(items[key]).map(function (k) { return global.Foods.meta(k)[0]; });
+      return '<div class="item"><div class="grow"><div class="item-name">' + A().esc(labels[key] || key) + '</div>' +
+        '<div class="item-sub">' + A().esc(parts.join('・')) + '</div></div>' +
+        '<button class="btn sub sm" data-unanchor="' + A().esc(key) + '">固定を外す</button></div>';
+    }).join('');
+  }
+
+  function openAnchors() {
+    S.Anchors.all().then(function (v) {
+      var sum = anchorSummary(v);
+      var body = A().openSheet('固定した推定値',
+        '<div class="tiny muted" style="margin-bottom:8px">' + sum.names.toLocaleString() + '品・' +
+        sum.keys.toLocaleString() + '項目。下に並ぶ栄養素を固定しています。「固定を外す」と、その食品は' +
+        '次の記録から今の推定の作りで推定します（記録済みの値は変わりません）。</div>' +
+        '<div id="anchorList">' + anchorRows(v) + '</div>', { tall: true });
+      body.addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-unanchor]');
+        if (!b) return;
+        S.Anchors.remove(b.getAttribute('data-unanchor')).then(function (next) {
+          if (global.Estimate && global.Estimate.setAnchors) global.Estimate.setAnchors(next ? next.items : {});
+          var list = body.querySelector('#anchorList');
+          if (list) list.innerHTML = anchorRows(next);
+          A().toast('固定を外しました');
+        });
+      });
+    });
   }
 
   function on(root, sel, ev, fn) {
